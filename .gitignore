@@ -1,0 +1,7 @@
+build/
+*.o
+*.out
+kbench
+kbench_id
+membw
+barrier
