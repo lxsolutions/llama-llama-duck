@@ -21,6 +21,14 @@ Measured on one 4-socket box, same engine, same day:
 | 754B MoE, ~2.7 bpw | ~18.5 GB | 4.3 | **79** |
 | 284B MoE, MXFP4 | ~5.7 GB | 1.9 | 11 |
 
+> **Reading the GB/s column.** These are *non-speculative* runs, where
+> `tok/s x active bytes/token` genuinely measures DRAM traffic. Do **not** apply
+> that formula to a speculative run: accepted drafts emit K tokens per single
+> target forward pass, so weights are not re-read per emitted token. The product
+> then measures *effective output throughput*, not bandwidth, and will exceed the
+> real DRAM rate by the acceptance multiple. Quote raw bandwidth only from
+> speculation-off arms.
+
 **Throughput is set by active bytes per token, not parameter count, not
 dense-vs-MoE, not quant name.** The two "slow" models above have the *highest*
 achieved bandwidth of anything measured — they are not inefficient, they simply
@@ -34,7 +42,11 @@ Memory ceilings on this host: **138.9 GB/s interleaved, 365 GB/s NUMA-local**
 A useful planning rule for this class of machine: **to clear ~12 tok/s you need
 roughly <=2 GB of active weights per token.**
 
-Adding n-gram speculative decoding gave a further +40% on the models tested.
+Adding speculative decoding gave a further +40% to +90% on the models tested.
+Note this raises *emitted* tokens/second without raising DRAM traffic
+proportionally — it is a reduction in target forward passes per emitted token,
+which is why it can carry a model past a rate its raw bandwidth alone would not
+support.
 
 ## The big finding: CPU repack does not help MoE at batch 1
 
@@ -85,6 +97,32 @@ prefill (512-token batch) : 41.97 tok/s   -> 22x higher per-token rate
 - Speculative decoding is worth more than its acceptance rate implies: verifying
   K draft tokens puts K rows through each expert, which can cross the 3-row
   threshold and flip `gemv` into `gemm`.
+
+## Optimizing for draft acceptance is a trap
+
+Sweeping `p_min` on a 27B dense model with a matched MTP draft head:
+
+| p_min | draft acceptance | decode tok/s |
+| ---: | ---: | ---: |
+| **0** | 63% | **11.04** |
+| 0.5 | 79% | 9.35 |
+| 0.7 | 86% | 8.46 |
+| 0.85 | 89% | 7.72 |
+
+Acceptance rises monotonically while throughput falls 30%. Confidence gating
+suppresses drafts that would have been accepted anyway, and the drafts it does
+emit are shorter. **Aggregate tokens/second is the only valid objective**;
+acceptance rate was anti-correlated with it across this entire sweep.
+
+Draft depth wants to be shallow too: `n_max=2` beat both 1 and 3
+(11.04 / 10.17 / 10.37). And for `ngram-mod`, `n_match=8` beat the default 24 by
+38% on replay traffic (10.40 -> 14.32 tok/s) -- the engine warns that 8 is "too
+small", but speculation is verified against the target model, so accepted tokens
+are exactly what the target would have produced. The warning concerns draft
+hit-rate, not output correctness.
+
+These optima are **per model**. A different model on the same host preferred
+`p_min=0.8` and much deeper drafts. Re-derive them; do not port them.
 
 ## Speculative decoding pays twice on CPU
 
