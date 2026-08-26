@@ -48,12 +48,12 @@ proportionally — it is a reduction in target forward passes per emitted token,
 which is why it can carry a model past a rate its raw bandwidth alone would not
 support.
 
-## The big finding: CPU repack does not help MoE at batch 1
+## Repack helps dense matmuls far more than MoE expert matmuls
 
-`llama.cpp` has a "repack" path (`GGML_CPU_REPACK`) that re-interleaves quantized
-weights into a blocked layout for AVX-512/VNNI GEMM. It is a large win — but only
-for dense 2D `MUL_MAT`. Measured with `tools/kbench_id.cpp`, same tensor, same
-threads, only the op differs:
+`llama.cpp`'s repack path (`GGML_CPU_REPACK`) re-interleaves quantized weights
+into a blocked layout for AVX-512/VNNI. Measured with `tools/kbench_id.cpp`,
+comparing **repacked against non-repacked within each op type** (the only valid
+comparison — see the caveat below):
 
 | type | op | default | repacked | speedup |
 | --- | --- | ---: | ---: | ---: |
@@ -62,41 +62,41 @@ threads, only the op differs:
 | Q4_K | `MUL_MAT` (2D, dense) | 0.363 ms | **0.146 ms** | 2.48x |
 | Q4_K | `MUL_MAT_ID` (3D, MoE) | 0.533 ms | 0.424 ms | 1.26x |
 
-The tensors *are* repacked in both cases. The MoE path simply does not benefit,
-and for MXFP4 it is slightly slower.
+The tensors are repacked in both cases. Dense gains 2.5-6.7x; MoE gains
+0.93-1.26x, i.e. nothing, and for MXFP4 it is marginally negative.
 
-The cause is in `ggml/src/ggml-cpu/repack.cpp`, inside `forward_mul_mat_id`:
+Sweeping batch size, MoE repack gain rises slowly and never approaches dense:
 
-```
-// If there are more than three rows in src1, use gemm; otherwise, use gemv.
-```
+| tokens | rows/expert | default | repacked | speedup |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.19 | 0.491 ms | 0.337 ms | 1.46x |
+| 8 | 1.50 | 3.583 ms | 2.588 ms | 1.38x |
+| 32 | 6.00 | 13.652 ms | 8.670 ms | 1.57x |
+| 64 | 12.00 | 27.430 ms | 16.593 ms | 1.65x |
 
-The blocked layout exists to amortize work **across rows**. During autoregressive
-decode each expert receives exactly one token — one row — so it takes the `gemv`
-path and the interleaving buys nothing. During prefill each expert receives many
-rows, takes `gemm`, and gets the full speedup.
+Absolute time scales nearly linearly with batch, so per-token cost improves only
+~1.3x across a 64x batch — more tokens simply touch more distinct experts.
+**Batching concurrent requests does not rescue MoE decode.**
 
-This is directly observable end to end. On one MoE model, identical weights and
-placement:
+A plausible mechanism is the row threshold in `forward_mul_mat_id`
+(`repack.cpp`): *"If there are more than three rows in src1, use gemm; otherwise,
+use gemv."* The blocked layout amortizes across rows, and autoregressive decode
+gives each expert one row. Note the MoE path does still call the **repacked**
+`gemv` — it is not falling back to generic `vec_dot` — so this is a question of
+how much the layout buys for a single row, not of the kernel being bypassed.
 
-```
-decode  (1 row/expert)    :  1.88 tok/s
-prefill (512-token batch) : 41.97 tok/s   -> 22x higher per-token rate
-```
+### Caveat: do not compare across op types with this harness
 
-**Practical consequences**
+An earlier version of this document used these numbers to argue MoE is
+structurally slower than dense in absolute terms. **That inference was wrong and
+has been withdrawn.** The two arms do unequal work: the 2D arm computes ONE
+`[4096x2048]` matmul while the 3D arm computes SIX expert matmuls
+(`n_expert_used=6`). Per matmul the MoE arm is ~0.069 ms against the dense arm's
+0.525 ms, so the cross-op comparison says nothing useful.
 
-- For MoE models, "is this quant repack-eligible?" is nearly irrelevant. One model
-  tested was 99.8% repack-eligible by bytes and still decoded at 1.9 tok/s,
-  because 97.4% of those bytes were routed experts.
-- Dense models take the 2D path for everything and get the full benefit. But
-  note this does **not** mean "dense is faster" — a MoE model with small experts
-  can be far faster than a dense one, because active bytes dominate. Density
-  determines which kernel path you get; active bytes determine how much work
-  there is.
-- Speculative decoding is worth more than its acceptance rate implies: verifying
-  K draft tokens puts K rows through each expert, which can cross the 3-row
-  threshold and flip `gemv` into `gemm`.
+Only the **within-op** default-vs-repacked ratios above are sound. If you want an
+absolute dense-vs-MoE comparison, normalize by `n_expert_used` and by the actual
+FLOPs, which this harness does not currently do.
 
 ## Optimizing for draft acceptance is a trap
 
