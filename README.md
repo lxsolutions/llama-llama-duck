@@ -9,23 +9,32 @@ several "obvious" optimizations do nothing, one undocumented behaviour costs
 ~9x on Mixture-of-Experts models, and the single variable that actually
 predicts throughput is **active bytes per token**.
 
-## TL;DR — measured on one box, same day, same engine
+## TL;DR — one variable predicts everything
 
-| model | type | active bytes/token | decode tok/s |
-| --- | --- | ---: | ---: |
-| 26B dense, Q4_0 | dense | ~14.6 GB | **16.6** |
-| 35B MoE, 3B active, Q4_K_M | MoE | ~1.7 GB | **13.7** |
-| 754B MoE, ~2.7 bpw | MoE | ~18.5 GB | 4.3 |
-| 27B dense, Q8_K_XL | dense | ~28.7 GB | 3.9 |
-| 284B MoE, MXFP4 | MoE | ~5.7 GB | 1.9 |
+Measured on one 4-socket box, same engine, same day:
 
-Adding n-gram speculative decoding to the 26B dense model takes it to
-**21.2-23.7 tok/s** (100% draft acceptance on both novel prose and file-edit
-replay) -- 12.6x the 284B MoE model, on the same host, same engine, same hour.
+| model | active bytes/token | decode tok/s | achieved GB/s |
+| --- | ---: | ---: | ---: |
+| 26B MoE, tiny experts, Q4_0 | ~1.0 GB | **16.6** | ~17 |
+| 35B MoE, 3B active, Q4_K_M | ~1.7 GB | **13.7** | ~23 |
+| 27B **dense**, Q4_0 | ~16 GB | 4.3 | **69** |
+| 754B MoE, ~2.7 bpw | ~18.5 GB | 4.3 | **79** |
+| 284B MoE, MXFP4 | ~5.7 GB | 1.9 | 11 |
 
-Parameter count predicts nothing. A 26B model runs **8.8x faster** than a 284B
-one and **4.3x faster** than a 27B one. Bytes moved per token, and which kernel
-path those bytes take, is the whole story.
+**Throughput is set by active bytes per token, not parameter count, not
+dense-vs-MoE, not quant name.** The two "slow" models above have the *highest*
+achieved bandwidth of anything measured — they are not inefficient, they simply
+move 10-18x more bytes per token than the fast ones.
+
+Memory ceilings on this host: **138.9 GB/s interleaved, 365 GB/s NUMA-local**
+(4 x 95.3 GB/s, measured concurrently with `tools/membw.c`). So a model at
+16 GB/token cannot reach 12 tok/s on the interleaved path at all — that needs
+192 GB/s. Budget accordingly before choosing a model.
+
+A useful planning rule for this class of machine: **to clear ~12 tok/s you need
+roughly <=2 GB of active weights per token.**
+
+Adding n-gram speculative decoding gave a further +40% on the models tested.
 
 ## The big finding: CPU repack does not help MoE at batch 1
 
@@ -68,7 +77,11 @@ prefill (512-token batch) : 41.97 tok/s   -> 22x higher per-token rate
 - For MoE models, "is this quant repack-eligible?" is nearly irrelevant. One model
   tested was 99.8% repack-eligible by bytes and still decoded at 1.9 tok/s,
   because 97.4% of those bytes were routed experts.
-- Dense models take the 2D path for everything and get the full benefit.
+- Dense models take the 2D path for everything and get the full benefit. But
+  note this does **not** mean "dense is faster" — a MoE model with small experts
+  can be far faster than a dense one, because active bytes dominate. Density
+  determines which kernel path you get; active bytes determine how much work
+  there is.
 - Speculative decoding is worth more than its acceptance rate implies: verifying
   K draft tokens puts K rows through each expert, which can cross the 3-row
   threshold and flip `gemv` into `gemm`.
@@ -166,6 +179,42 @@ Socket scaling is shape-dependent and can be negative — always measure:
 | --- | ---: | ---: |
 | MXFP4 `[4096x2048]` | **0.069 ms** | 0.201 ms (2.9x worse) |
 | Q2_K `[6144x2048]` | 0.124 ms | **0.101 ms** (1.23x better) |
+
+## Repack eligibility by type is necessary, not sufficient
+
+`tools/gguf_types.py` reports which tensor types can use the repack path. That is
+a useful screen, but it **overestimates** what actually happens, because the
+`_8x8` traits also require shape constraints (`ne[1] % 8 == 0`). Two builds of the
+same 27B model:
+
+| build | type census says | actually repacked (RssAnon/total) | tok/s |
+| --- | ---: | ---: | ---: |
+| dynamic `UD-Q4_K_M` | 68% eligible | **~25%** (4.9 of 16.5 GB) | 2.7 |
+| plain `Q4_0` | 97% eligible | **~75%** (12.1 of 16.0 GB) | 4.3 |
+
+The dynamic Q4_K_M build was *slower than the Q8 build of the same model* despite
+moving half the bytes. Uniform `Q4_0` is the format that repacks most reliably.
+
+**Ground truth is `RssAnon` vs `RssFile` in `/proc/<pid>/status` during load**, not
+a type census. With mmap, repacked tensors become anonymous pages while
+un-repacked ones stay file-backed.
+
+## Thread count is per-model and can collapse
+
+Sweeping a 27B dense model, same build, same host:
+
+| threads | decode tok/s |
+| ---: | ---: |
+| 16 | 3.40 |
+| 32 | 3.98 |
+| 48 | **4.33** |
+| 64 | **1.44** |
+
+A 3x cliff between 48 and 64 threads on a 64-core machine. Matrix ops below a
+certain size parallelize negatively — dispatch and cross-socket cache traffic
+cost more than the arithmetic. Always sweep; never assume all cores is best.
+If you are A/B-ing anything else, pin thread count across arms or this will
+swamp your result.
 
 ## Tools
 

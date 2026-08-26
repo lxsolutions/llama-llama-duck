@@ -75,9 +75,14 @@ def main():
         ok = k in REPACK
         if ok: elig += bytes_[k]
         print(f"{k:<9} {v:>16,} {100*v/tot:>6.2f}% {bytes_[k]/1e9:>6.1f}  {'YES' if ok else 'no'}")
-    print(f"\nREPACK-ELIGIBLE BY BYTES: {100*elig/totb:.1f}%")
-    print("NOTE: for MoE models this is nearly meaningless at decode time -- "
-          "routed experts run MUL_MAT_ID, which takes the gemv path at batch 1 "
-          "and gains nothing from repack. See README.")
+    print(f"\nREPACK-ELIGIBLE BY BYTES: {100*elig/totb:.1f}%  (UPPER BOUND)")
+    print()
+    print("CAVEAT 1: this is necessary but NOT sufficient. The _8x8 repack traits")
+    print("  also require shape constraints (ne[1] %% 8 == 0), so actual repack is")
+    print("  often far lower. One model that scored 68%% here achieved only ~25%%.")
+    print("  Ground truth is RssAnon vs RssFile in /proc/<pid>/status during load.")
+    print("CAVEAT 2: for MoE models this barely matters at decode time -- routed")
+    print("  experts run MUL_MAT_ID, which takes the gemv path at batch 1 and")
+    print("  gains at most ~1.65x from repack even at 12 rows/expert. See README.")
 
 main()
