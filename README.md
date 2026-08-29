@@ -165,6 +165,34 @@ tok/s, with the single socket fully saturated at 16.2/16 cores busy.
 **Memory bandwidth.** The box sustains 365 GB/s NUMA-local aggregate. Decode was
 using 22% of it.
 
+## Per-socket tensor sharding is different from page placement
+
+The page-placement result above applies to one ordinary CPU backend executing a
+whole graph. Exposing each NUMA node as a separate llama.cpp device changes the
+execution model: weights are tensor-sharded across sockets, every shard uses a
+local persistent thread pool, and the Meta backend runs the shards concurrently.
+
+An experimental Linux patch against llama.cpp build 249 produced this raw
+decode result on a 31.45 GB Qwen3.8-27B GGUF:
+
+| configuration | decode tok/s |
+| --- | ---: |
+| one NUMA device, 16 cores | 2.524 |
+| four devices, generic Meta collective | 5.239 |
+| four devices, direct F32 collective | **7.169** |
+
+The direct path was 36.8% faster than the corrected generic four-device path
+and 2.84x the one-device result. After tuning the model MTP head, a full-context
+exact-output request reached 16.49 tok/s at 93.3% draft acceptance. A separate
+agentic replay profile reached 18.37 tok/s on first pass and 23.58 tok/s after a
+reasoning pattern repeated.
+
+This is an opt-in experimental backend, not a claim that every model benefits.
+The same measurements found a 12-core-per-socket optimum and a small regression
+from huge-page advice. The patch, runtime contract, validation notes, and exact
+benchmark commands are in [`patches/README.md`](patches/README.md) and
+[`benchmarks/qwen38-27b-cpu-numa.md`](benchmarks/qwen38-27b-cpu-numa.md).
+
 ## Gotchas worth knowing
 
 **`--numa distribute` overrides `numactl`.** Passing both `numactl --interleave=all`
@@ -253,6 +281,23 @@ certain size parallelize negatively — dispatch and cross-socket cache traffic
 cost more than the arithmetic. Always sweep; never assume all cores is best.
 If you are A/B-ing anything else, pin thread count across arms or this will
 swamp your result.
+
+## Published engineering bundles
+
+The repository now includes the source deltas and measured launch contracts,
+not just the standalone diagnostic tools:
+
+| Area | Artifact |
+| --- | --- |
+| llama.cpp source work | [`three pinned, checksummed patch bundles`](patches/README.md) |
+| upstream-derived code provenance | [`patch attribution`](patches/ATTRIBUTION.md) |
+| ready-to-edit server launchers | [`SR950 profiles`](profiles/README.md) |
+| Qwen3.8-27B raw and speculative results | [`focused CPU-NUMA benchmark`](benchmarks/qwen38-27b-cpu-numa.md) |
+| GLM-5.3 full/Flash and Qwen3.8 Flash Next | [`model tuning results`](benchmarks/sr950-model-profiles.md) |
+
+Patch bundles target exact upstream commits and are intentionally separate
+where their source bases differ. Start with [`patches/README.md`](patches/README.md)
+before applying or rebasing them.
 
 ## Tools
 

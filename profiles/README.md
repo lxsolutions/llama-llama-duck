@@ -1,0 +1,20 @@
+# SR950 launch profiles
+
+These launchers capture measured starting points for a four-socket Xeon Gold
+6242 host. They use environment variables for every path and contain no
+machine-specific directories, credentials, or network addresses.
+
+| Profile | Placement | Starting point |
+| --- | --- | --- |
+| [`launch-glm53-full.sh`](launch-glm53-full.sh) | four `CPU-NUMA` devices | 16 cores/socket, poll 50, direct collective, 32K, Q8_0 KV, MTP default 2 |
+| [`launch-glm53-flash.sh`](launch-glm53-flash.sh) | one NUMA node, preferred memory | 32 cores, mmap, Flash Attention off, F16 KV |
+| [`launch-qwen38-27b.sh`](launch-qwen38-27b.sh) | four `CPU-NUMA` devices | 12 cores/socket, poll 100, direct collective, 256K, Q8_0 KV, MTP 3/0/0.2 |
+| [`launch-qwen38-flash-next.sh`](launch-qwen38-flash-next.sh) | one NUMA node, strict memory | 32 cores, `--load-mode none`, F16 KV |
+
+Set `LLAMA_SERVER` and `MODEL` before running a script. Full GLM and Qwen-27B
+also require `MTP_MODEL`. `PORT` defaults to 8080, `HOST` to 127.0.0.1, and
+additional llama-server arguments can be appended on the command line.
+
+These are benchmark profiles, not universal defaults. Re-sweep thread count,
+context, batch geometry, speculative depth, and confidence threshold after any
+model, quant, compiler, firmware, or llama.cpp change.
