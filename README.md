@@ -434,6 +434,7 @@ not just the standalone diagnostic tools:
 | GLM-5.3-Flash: backend ports, tensor-parallel does not | [`Flash NUMA port`](benchmarks/glm53-flash-numa-port.md) |
 | Moving the CPU-NUMA backend to another branch | [`porting guide`](patches/PORTING.md) |
 | What a 10 tok/s target actually requires | [`ten tok/s analysis`](benchmarks/ten-tokens-per-second.md) |
+| Why `glm5next` cannot tensor-parallel (exact tensor) | [`glm5next TP blocker`](benchmarks/glm5next-tensor-parallel-blocker.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)

@@ -1,0 +1,15 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 0d1bfee0..140017a8 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -456,6 +456,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+         }
+         const ggml_tensor * tensor_axis_0 = suffix.empty() ? tensor : ud->model->get_tensor((prefix + suffix).c_str());
+         if (tensor_axis_0 == nullptr) {
++            if (suffix_fallback.empty()) {
++                LLAMA_LOG_ERROR("%s: SPLIT-STATE MISS tensor='%s' prefix='%s' suffix='%s' (no fallback)\n",
++                               __func__, tensor_name.c_str(), prefix.c_str(), suffix.c_str());
++            }
+             GGML_ASSERT(!suffix_fallback.empty());
+             tensor_axis_0 = ud->model->get_tensor((prefix + suffix_fallback).c_str());
+         }
