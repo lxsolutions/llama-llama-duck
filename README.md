@@ -311,9 +311,20 @@ tokens/second at `temperature=0`:
 | model | before | after | what changed |
 | --- | ---: | ---: | --- |
 | Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **8.98** | un-pinned from one socket; 12 threads/node |
-| Qwen3.8-27B (dense, Q8_K_XL) | — | **6.12** | 16 threads/node; repack neutral |
-| GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.11** | removed a composite `--spec-type` that failed every request |
+| Qwen3.8-27B (dense) | 6.12 | **8.33** | Q8_K_XL -> Q4_0; MTP draft at depth 2 |
+| GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.32** general / **12.92** replay | removed a composite `--spec-type` that failed every request |
 | GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
+
+Chasing a **10 tok/s** bar across all four produced the most useful single
+number in this repository: whole-model decode extracts about **one third** of
+streaming bandwidth (33–37%) on every model measured, while the kernels in
+isolation reach **45%**. Three of the four models are gated on that same gap —
+it is one problem, not four. GLM-5.3 full is gated on something stricter:
+10 tok/s at its 36 GB/token needs 360 GB/s, i.e. 99% of peak, so it is
+unreachable without speculation regardless of kernel quality.
+
+Full arithmetic, the exhausted-knob table, and what each model would still
+need: [`benchmarks/ten-tokens-per-second.md`](benchmarks/ten-tokens-per-second.md).
 
 The largest single win was not a kernel — it was noticing a model was pinned to
 one of four sockets. The second largest was noticing a server that answered
@@ -422,6 +433,7 @@ not just the standalone diagnostic tools:
 | GLM-5.3 full: composite-spec failure and recovery | [`composite spec failure`](benchmarks/glm53-full-composite-spec-failure.md) |
 | GLM-5.3-Flash: backend ports, tensor-parallel does not | [`Flash NUMA port`](benchmarks/glm53-flash-numa-port.md) |
 | Moving the CPU-NUMA backend to another branch | [`porting guide`](patches/PORTING.md) |
+| What a 10 tok/s target actually requires | [`ten tok/s analysis`](benchmarks/ten-tokens-per-second.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
