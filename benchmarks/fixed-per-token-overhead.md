@@ -70,6 +70,45 @@ residual). Four times the compute removed 30% of the fixed cost. That is the
 signature of per-operation cost that partially parallelizes, not of a serial
 section.
 
+## Correction: it is NOT the routed-expert matmuls
+
+An earlier revision of this file concluded that the fixed cost was
+per-operation dispatch over the hundreds of routed-expert matmuls, and
+recommended MoE expert fusion as the fix. **That was tested directly and is
+wrong.**
+
+`--override-kv qwen4exp.expert_used_count` changes how many experts each token
+routes to, and therefore how many expert matmuls are issued per token. On
+Qwen3.8-Flash-Next, single node, correct (non-sharded) path, all other settings
+fixed:
+
+| experts used | expert matmuls/token | tok/s | vs baseline |
+| ---: | ---: | ---: | ---: |
+| 10 (default) | 480 | 3.440 | — |
+| 6 | 288 | 3.592 | +4.4% |
+| 4 | 192 | 3.720 | **+8.1%** |
+
+**Cutting expert matmuls by 60% buys 8%.** If the ~92 ms residual were dominated
+by per-expert dispatch, removing three fifths of those operations would have
+removed a large fraction of it. It did not.
+
+(Absolute values here are depressed relative to the 6.69 tok/s measured
+elsewhere for this configuration, because the page cache was cold after many
+model loads. The arms were run back-to-back under identical conditions, so the
+*comparison* holds even though the levels are low. Output remained correct at
+all three expert counts.)
+
+So the fixed cost lives somewhere other than the routed-expert path — candidates
+are the dense attention block (1.80 GB/token, 40% of this model's active
+bytes), per-token graph dispatch that does not scale with expert count, or
+sampling and token bookkeeping. **Fusing the MoE expert path would not have
+delivered the 2.4x**, and this repository recommended it before testing it.
+
+Anyone attacking this should profile per-operation time inside a single decode
+step before choosing a target. The byte accounting says where the *bandwidth*
+goes; it does not say where the *time* goes, and on this host those are
+different questions.
+
 ## Where to look
 
 Flash-Next issues roughly `10 experts x 48 layers = 480` routed expert matmuls
