@@ -310,7 +310,7 @@ tokens/second at `temperature=0`:
 
 | model | before | after | what changed |
 | --- | ---: | ---: | --- |
-| Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **9.45** | un-pinned from one socket; 12 threads/node; NUMA poll 50 -> 100000 |
+| Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **9.45** | un-pinned from one socket; 12 threads/node; NUMA poll 50 -> 100 (its clamped maximum) |
 | Qwen3.8-27B (dense) | 6.12 | **8.62** prose / ~10.9 replay | Q8_K_XL -> Q4_0; MTP at depth 2; ngram-mod on replay |
 | GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.32** prose / **6.25** replay | removed a composite `--spec-type` that failed every request |
 | GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |

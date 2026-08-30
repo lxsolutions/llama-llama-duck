@@ -141,33 +141,58 @@ buys MoE ~1.0–1.26x against dense's 2.5–6.7x) and with its observation that 
 `gemv` only becomes `gemm` above three rows. **The MoE expert-gather path, not
 memory bandwidth, is the binding constraint on three of these four models.**
 
-## `GGML_CPU_NUMA_POLL` is worth 7.7% on MoE, and the default is far too low
+## `GGML_CPU_NUMA_POLL` is worth ~7% on MoE — but it is a percentage, 0–100
 
-Spin-wait length before a worker sleeps. With hundreds of tiny expert matmuls per
-token, wake-up latency is a large fraction of the work. Qwen3.8-Flash-Next,
+Polling aggressiveness while workers wait for work. Qwen3.8-Flash-Next,
 12 threads/node, everything else fixed:
 
-| `GGML_CPU_NUMA_POLL` | decode tok/s | run range |
-| ---: | ---: | --- |
-| 0 | 8.775 | 8.692–8.857 |
-| 50 | 8.980 | — |
-| 500 | 9.205 | 9.187–9.224 |
-| 2000 | 9.368 | 9.353–9.384 |
-| 10000 | 9.418 | 9.377–9.458 |
-| **100000** | **9.452** | 9.241–9.662 |
+| `GGML_CPU_NUMA_POLL` | effective | decode tok/s | run range |
+| ---: | ---: | ---: | --- |
+| 0 | 0 | 8.775 | 8.692–8.857 |
+| 50 | 50 | 8.980 | — |
+| 500 | **100** | 9.205 | 9.187–9.224 |
+| 2000 | **100** | 9.368 | 9.353–9.384 |
+| 10000 | **100** | 9.418 | 9.377–9.458 |
+| 100000 | **100** | 9.452 | 9.241–9.662 |
 
-Monotonic and tight, saturating around 10⁴. **+7.7% from one environment
-variable**, on a model where every configuration knob had already been swept.
-The previously published profiles used 50–100.
+**Read the "effective" column.** The value is clamped:
 
-It does **not** generalize. GLM-5.3 full, also MoE and with even more expert
-matmuls per token (8 of 256 experts x 78 layers = 624), measured *worse* at poll
-10000 than at 50 (4.97 vs 5.32 over six reps each). Sweep it per model.
+    const int poll = std::min(100, ggml_backend_cpu_env_int("GGML_CPU_NUMA_POLL", 50));
 
-Re-sweeping threads at the new poll did not move the optimum (t12 still best;
-t14 8.27, t16 8.25), so the two knobs are independent here.
+so every setting at or above 100 is the *same configuration*. The bottom four
+rows are four independent measurements of one arm, and their 9.205 → 9.452
+spread is **run-to-run noise of ±1.3%, not a trend**.
+
+The real result is `0 -> 50 -> 100`: **8.775 -> 8.980 -> ~9.36** (mean of the four
+100-equivalent runs), i.e. **+6.7% over the previously shipped default of 50**,
+saturating at the maximum legal value. Set it to 100. Anything larger is
+cosmetic.
+
+> An earlier revision of this file presented this as a monotonic curve
+> "saturating around 10⁴", described the knob as spin-wait *length*, and
+> recommended 100000. All three were wrong, from sweeping a parameter without
+> checking its domain. The measured gain survives; the mechanism and the
+> recommended value did not. **Check the clamp before you believe the curve.**
+
+This also dissolves the "non-reproduction" puzzle recorded below: the
+Qwen3.8-27B runs at poll 3000 / 10000 / 30000 / 100000 were all the identical
+configuration, so their 8.6 → 10.4 spread was always variance and never an
+effect.
+
+Re-sweeping threads did not move the optimum (t12 still best; t14 8.27,
+t16 8.25).
+
+Separately, `default_threads` is hardcoded to `std::min<int>(10, cpus.size())`,
+so a node with 16 physical cores advertises "10 physical cores" and defaults to
+10 threads unless `GGML_CPU_NUMA_THREADS` is set. The device description is
+reporting the default thread count, not a core count — do not read it as a
+topology discovery failure.
 
 ### The same sweep on Qwen3.8-27B did *not* reproduce — a variance lesson
+
+> With the clamp above understood, this section's puzzle resolves: all four of
+> these "different poll settings" were the same configuration. What follows is
+> therefore a pure measurement-variance record, which is still worth keeping.
 
 A first pass at poll `10000` on Qwen3.8-27B measured **10.379 tok/s** on novel
 prose (range 10.357–10.401), which would have cleared the 10 tok/s bar outright
