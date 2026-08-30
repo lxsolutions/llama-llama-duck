@@ -193,6 +193,27 @@ from huge-page advice. The patch, runtime contract, validation notes, and exact
 benchmark commands are in [`patches/README.md`](patches/README.md) and
 [`benchmarks/qwen38-27b-cpu-numa.md`](benchmarks/qwen38-27b-cpu-numa.md).
 
+## A server that starts is not a server that works
+
+A GLM-5.3 server ran for hours returning **500 on every completion** while
+`/health` returned `ok` and `/v1/models` returned full metadata:
+
+    {"code":500,"message":"decode() failed: failed to process speculative batch"}
+
+The cause was a **composite** speculative type, `--spec-type ngram-mod,draft-mtp`,
+which argument parsing accepts and startup accepts. Restarting with
+`--spec-type draft-mtp` fixed it outright.
+
+Two things made this misleading:
+
+- **`/health` is green.** It reports that the model loaded, not that decode
+  works. Health-check any serving change with an actual completion.
+- **Disabling speculation per request does not dodge it.** `{"speculative":
+  {"n_max": 0}}` still 500s, because the speculative context was built at
+  startup. That symptom argues for a request-level bug and costs you time.
+
+Validate `--spec-type` changes with one real request before walking away.
+
 ## Gotchas worth knowing
 
 **`--numa distribute` overrides `numactl`.** Passing both `numactl --interleave=all`
@@ -378,6 +399,10 @@ not just the standalone diagnostic tools:
 | ready-to-edit server launchers | [`SR950 profiles`](profiles/README.md) |
 | Qwen3.8-27B raw and speculative results | [`focused CPU-NUMA benchmark`](benchmarks/qwen38-27b-cpu-numa.md) |
 | GLM-5.3 full/Flash and Qwen3.8 Flash Next | [`model tuning results`](benchmarks/sr950-model-profiles.md) |
+| Qwen3.8-Flash-Next sharding sweep + 3 dead ends | [`Flash-Next NUMA benchmark`](benchmarks/qwen38-flash-next-numa.md) |
+| GLM-5.3 full: composite-spec failure and recovery | [`composite spec failure`](benchmarks/glm53-full-composite-spec-failure.md) |
+| GLM-5.3-Flash: backend ports, tensor-parallel does not | [`Flash NUMA port`](benchmarks/glm53-flash-numa-port.md) |
+| Moving the CPU-NUMA backend to another branch | [`porting guide`](patches/PORTING.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
