@@ -111,27 +111,29 @@ different questions.
 
 ## Where to look
 
-Flash-Next issues roughly `10 experts x 48 layers = 480` routed expert matmuls
-per token, each `[2560 x 640]`, then sharded four ways to about `[640 x 640]`
-per device, through `MUL_MAT_ID`'s single-row `gemv` path. GLM-5.3 full issues
-`8 x 78 = 624`. Per-operation cost times hundreds of operations is the shape
-that produces a size-independent constant.
+Given the expert-count result above, the remaining candidates, in the order a
+profiler should check them:
 
-This is consistent with, and sharper than, the earlier observation that MoE
-repack buys ~1.0–1.26x against dense's 2.5–6.7x: the expert path is not limited
-by how fast its arithmetic runs.
+1. **The dense attention block.** On Flash-Next it is 1.80 GB/token — 40% of
+   active bytes — and it is read in full every token regardless of routing. It
+   is untouched by the expert-count experiment, which makes it the leading
+   suspect for a cost that did not move when experts were cut by 60%.
+2. **Per-token graph dispatch and synchronization that does not scale with
+   expert count** — the fixed work of walking the graph, launching the thread
+   pool, and reducing at layer boundaries, once per token.
+3. **Sampling and token bookkeeping**, which is per-token by construction and
+   invisible to every weight-side optimization.
 
-The two concrete targets, in order:
+What is *not* on this list any more is MoE expert fusion, which an earlier
+revision recommended and the measurement above rules out as the dominant term.
 
-1. **Fuse the MoE expert path** so a token issues tens of operations rather than
-   hundreds. The sibling GLM engine carries `GGML_CPU_MOE_GATE_UP_FUSION`,
-   `GGML_CPU_MOE_WEIGHTED_SUM_FUSION` and
-   `GGML_CPU_MOE_DOWN_WEIGHTED_SUM_FUSION`; the Qwen engine has none of them.
-2. **Reduce per-op cross-device cost**, since sharding multiplies operation count
-   by the device count while dividing each one's work.
+The separately measured fact that `ik_llama.cpp` extracts 78% of its available
+bandwidth where this path extracts 33%
+([`kernel-efficiency-ceiling.md`](kernel-efficiency-ceiling.md)) still stands,
+and still says a 2.4x is reachable in software on this silicon. It just does not
+say *which* code is responsible, and this file's attempt to infer that from byte
+accounting was wrong.
 
-Combined with the separately measured fact that `ik_llama.cpp` extracts 78% of
-its available bandwidth where this path extracts 33%
-([`kernel-efficiency-ceiling.md`](kernel-efficiency-ceiling.md)), the picture is
-consistent: **the CPU MoE decode path on this class of machine is
-operation-count-bound, not bandwidth-bound.**
+**Profile a single decode step per-operation before choosing a target.** Byte
+accounting tells you where the bandwidth goes. It does not tell you where the
+time goes, and on this host those turned out to be different questions.
