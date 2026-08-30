@@ -315,8 +315,17 @@ tokens/second at `temperature=0`:
 | GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.32** prose / **6.25** replay | removed a composite `--spec-type` that failed every request |
 | GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
 
-Chasing a **10 tok/s** bar across all four produced the most useful single
-number in this repository, and it is not a tok/s figure. On the same host, same
+Chasing a **10 tok/s** bar across all four produced two results that matter more
+than any tok/s figure.
+
+**A fixed ~92 ms per token, independent of model size.** Subtracting the
+bandwidth-limited portion from measured decode time leaves 94 / 91 / 92 ms for
+GLM-5.3 full, Qwen3.8-27B and Qwen3.8-Flash-Next — three models spanning **7.6x
+in active bytes per token**. Flash-Next spends **88% of every token not reading
+weights**, which is why a dozen configuration knobs each moved it 2–3%. Details
+and caveats: [`fixed-per-token-overhead.md`](benchmarks/fixed-per-token-overhead.md).
+
+**And the gap is software, not silicon.** On the same host, same
 model, same quant, `ik_llama.cpp` extracts **78%** of the bandwidth available to
 it while mainline's CPU-NUMA path extracts **33%**. That rules out a hardware
 explanation for the gap: **2.4x is demonstrably reachable on this silicon.**
@@ -440,6 +449,7 @@ not just the standalone diagnostic tools:
 | What a 10 tok/s target actually requires | [`ten tok/s analysis`](benchmarks/ten-tokens-per-second.md) |
 | Why `glm5next` cannot tensor-parallel (exact tensor) | [`glm5next TP blocker`](benchmarks/glm5next-tensor-parallel-blocker.md) |
 | 78% extraction is achievable; mainline NUMA gets 33% | [`kernel efficiency ceiling`](benchmarks/kernel-efficiency-ceiling.md) |
+| A fixed ~92 ms/token, invariant across a 7.6x byte range | [`fixed per-token overhead`](benchmarks/fixed-per-token-overhead.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
