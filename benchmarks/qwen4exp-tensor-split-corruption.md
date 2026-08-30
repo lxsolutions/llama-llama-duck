@@ -158,18 +158,45 @@ apply cleanly, and nothing complains.
 hazard.** A pattern like `blk\.\d*\.ssm_out.weight` is an assertion about
 semantics dressed up as a string match.
 
-### An attempted one-line fix, and why it is not one
+### Three attempts at a fix, and why it is not a patch
 
-Forcing `qwen4exp`'s `ssm_*` tensors to `GGML_BACKEND_SPLIT_AXIS_MIRRORED`
-(replication is always arithmetically safe, and these tensors are small) does not
-work — it fails at load:
+Replication is always arithmetically safe and these tensors are small, so
+mirroring the SSM block looks like a clean fix. There is even a precedent in the
+same function — LFM2's shortconv block is mirrored, conv state included, for
+exactly this reason. It does not converge:
 
-    ggml-backend-meta.cpp:651: GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN)
+| attempt | mirrored set | result |
+| ---: | --- | --- |
+| 1 | `blk.N.ssm_*` | `GGML_ASSERT(ret.axis != ...UNKNOWN)` at load |
+| 2 | + `cache_r_l*`, `cache_s_l*` | same assert |
+| 3 | + `attn_gate.weight` | same assert |
 
-The SSM tensors are **load-bearing in the split reference graph**: other tensors
-name them as their axis-0 reference, so making them mirrored leaves those
-dependents unresolvable. A correct fix has to assign axes to the SSM group and
-its dependents together, derived from the architecture's dataflow. Reverted.
+Each attempt exposed another tensor anchored on the SSM block. The reason is
+visible in the rules: **every** SSM config resolves its axis against
+`ssm_out.weight` —
+
+    ssm_dt, ssm_a          -> AXIS_0, ref "ssm_out.weight"
+    ssm_alpha, ssm_beta    -> AXIS_1, ref "ssm_out.weight"
+    ssm_conv1d             -> AXIS_1, ref "ssm_out.weight"
+    cache_r_l*, cache_s_l* -> AXIS_0, ref "ssm_out.weight"
+    attn_gate              -> AXIS_1, ref "attn_output.weight",
+                                      fallback "ssm_out.weight"
+
+and this architecture has **no `attn_output.weight`** — its attention output is
+projected through `ssm_out.weight`. So attention and SSM are one entangled group
+anchored on a single tensor, and mirroring that tensor invalidates every
+dependent at once.
+
+The assert names no tensor, so each round costs a rebuild to learn the next
+dependent. More importantly, an edit that merely makes it *load* is worthless
+here: this whole document exists because a configuration that loads, runs and
+benchmarks well was emitting garbage. Any fix must be validated by **exact
+output comparison against the single-node arm at `temperature=0`**, not by
+absence of a crash.
+
+Reverted; engine verified back to correct single-node output. The real fix
+assigns axes to the attention+SSM group as a unit, derived from
+`build_qwen4exp`'s dataflow.
 
 ## Recommended handling
 
