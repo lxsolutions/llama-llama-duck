@@ -71,13 +71,17 @@ export GGML_CPU_NUMA_POLL="${NUMA_POLL:-100}"
 export GGML_CPU_NUMA_DIRECT_ALLREDUCE=1
 export GGML_CPU_NUMA_REPACK=1
 
+# --mlock with mmap measured 9.645 vs 9.452 (+2%). Note --load-mode none, which
+# also puts weights in anonymous memory, was *worse* (9.473) -- so the gain is
+# from pinning, not from avoiding mmap. Needs the memlock rlimit raised.
+
 devices="${DEVICES:-CPU-NUMA0,CPU-NUMA1,CPU-NUMA2,CPU-NUMA3}"
 splits="${TENSOR_SPLIT:-1,1,1,1}"
 
 exec "$LLAMA_SERVER" \
   --host "${HOST:-127.0.0.1}" --port "${PORT:-8080}" \
   --model "$MODEL" "${mmproj_args[@]}" \
-  --load-mode mmap --fit off --gpu-layers 999 \
+  --load-mode mmap --mlock --fit off --gpu-layers 999 \
   --ctx-size "${CTX_SIZE:-65536}" \
   --device "$devices" --split-mode tensor --tensor-split "$splits" \
   --cache-type-k f16 --cache-type-v f16 \
