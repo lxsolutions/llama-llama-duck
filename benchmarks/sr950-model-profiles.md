@@ -74,6 +74,13 @@ No throughput number is claimed for the IQ2 or IQ3 candidates.
 
 ## Qwen3.8 Flash Next
 
+> **Superseded 2026-08-29.** The single-node conclusion below was correct for
+> the engine build available at the time, which had no `CPU-NUMA` device
+> backend. A build that exposes `CPU-NUMA0..3` reaches **8.98 tok/s**, +34% over
+> the best single-node arm. Full sweep, including three measured dead ends, in
+> [`qwen38-flash-next-numa.md`](qwen38-flash-next-numa.md). The table below is
+> retained as the single-node reference.
+
 The measured UD-Q2_K_XL text-plus-projector footprint was about 79.77 GB, which
 fits comfortably on one node in this host.
 
@@ -89,18 +96,24 @@ fits comfortably on one node in this host.
 | One node, 24 threads | 6.04 |
 | One node, 32 threads | **6.47** |
 | Full serving configuration | 6.32 |
+| *Four `CPU-NUMA` devices, 12 threads/node, repack* | ***8.98*** |
 
-The selected raw arm was about 2.5x the untuned control. This model wants strict
-single-node CPU and memory binding, 32 threads, `--load-mode none`, and F16 KV.
-Q8_0 KV is not a lower-memory substitute here; the tested path asserts.
+On the single-node path this model wants strict CPU and memory binding, 32
+threads, `--load-mode none`, and F16 KV. Q8_0 KV is not a lower-memory
+substitute here; the tested path asserts. On the four-device path it wants
+12 threads **per node** — 16 is 14% worse than 12, and worse than 8.
 
 A detached MTP sidecar candidate was 4,142,897,248 bytes with SHA-256
 `b9880220df29fc224bbce408c867cd5d9c021263b754033ea624b669e374f4ec`.
 Its public source was
 [`drluoto/Qwen3.8-Flash-Next-MTP-GGUF`](https://huggingface.co/drluoto/Qwen3.8-Flash-Next-MTP-GGUF)
-at revision `67de7592b670ef454a903574d5e2aa6c8e1d6b46`. It remains
-unbenchmarked, so the launcher enables it only when `MTP_MODEL` is explicitly
-set.
+at revision `67de7592b670ef454a903574d5e2aa6c8e1d6b46`.
+
+**It is now benchmarked and it is a dead end**: 0.00000 draft acceptance
+(0 accepted / 198 generated), taking decode from 8.98 to 3.13 tok/s. Pinning the
+draft to a single node — previously listed here as a promising untried option —
+changed nothing (3.17). The launcher continues to leave speculation off by
+default.
 
 ## Reproduction
 

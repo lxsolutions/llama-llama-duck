@@ -282,6 +282,90 @@ cost more than the arithmetic. Always sweep; never assume all cores is best.
 If you are A/B-ing anything else, pin thread count across arms or this will
 swamp your result.
 
+## Check what fraction of the machine your model is actually on
+
+The single largest win measured in this repository was not a kernel or a patch.
+It was noticing that a model's launch profile pinned it to **one** of four
+sockets, capping it at ~95.3 GB/s of the host's ~365 GB/s.
+
+Qwen3.8-Flash-Next (176.9B MoE, `UD-Q2_K_XL`, 78.8 GB):
+
+| configuration | decode tok/s |
+| --- | ---: |
+| one NUMA node, 32 threads | 6.68 |
+| four `CPU-NUMA` devices, 16 threads/node | 7.71 |
+| four `CPU-NUMA` devices, **12 threads/node** | **8.98** |
+
+**+34%**, from a launch-flag change. Single-node pinning is often introduced as
+a *correctness* workaround during bring-up — to dodge an allocation failure or
+an unvalidated code path — and then never revisited once it works. Audit for it
+before optimizing anything else. `--list-devices` with `GGML_CPU_NUMA_DEVICES=1`
+tells you whether the sharded path is even available in your build.
+
+Note the ceiling did not move: at 8.98 tok/s the sharded arm still extracts only
+~30% of 365 GB/s, where the single-node arm was near its own limit. Sharding
+moved the bottleneck off memory and onto the collective and the kernels. That is
+where the next win is, and it is a harder one.
+
+Details: [`benchmarks/qwen38-flash-next-numa.md`](benchmarks/qwen38-flash-next-numa.md).
+
+## Check draft acceptance before optimizing anything about the draft
+
+A published MTP head for Qwen3.8-Flash-Next scored **0.00000 acceptance
+(0 accepted / 198 generated)**. Speculation was therefore pure overhead:
+
+| arm | decode tok/s |
+| --- | ---: |
+| no speculation | **8.98** |
+| `draft-mtp` `n_max=2`, draft across four devices | 3.13 |
+| `draft-mtp` `n_max=2`, draft pinned to one node | 3.17 |
+| `draft-mtp` `n_max=4` | 2.14 |
+
+This retires an idea previously listed here as promising-but-untried: pinning a
+small draft model to a single socket so it does not pay cross-socket collective
+cost. Measured, it changed nothing (3.17 vs 3.13) — because when acceptance is
+zero, no amount of draft placement matters.
+
+`acceptance == 0` and `acceptance` merely *low* look identical in a throughput
+number but have completely different fixes. The server prints it; read it first:
+
+    draft acceptance = 0.00000 (0 accepted / 198 generated), mean len = 1.00
+
+Related but distinct from the earlier finding that *maximizing* acceptance is a
+trap. Both hold: do not tune for acceptance, but do check it is nonzero.
+
+## `ngram-mod` is workload-scoped, not a default
+
+| model / workload | baseline | `ngram-mod` |
+| --- | ---: | ---: |
+| 26B dense, file-edit replay | 16.12 | **22.72** |
+| 176.9B MoE, novel prose | **8.98** | 4.88 |
+
+Same flag, +41% and −46%. `ngram-mod` drafts from repetition already in the
+context; novel generation has none, so it pays verification on drafts that are
+then rejected. Ship it as a per-request option, never as a server default.
+
+## The "go up to Q4" rule does not generalize
+
+GLM-5.3 measured *faster* at `UD-Q4_K_XL` than at its compact Q2/Q3 tiers,
+because those tiers were dominated by IQ2_XS/IQ3_XXS — compute-bound at
+~7.2 GB/s and not repack-eligible. It is tempting to generalize.
+
+Qwen3.8-Flash-Next, same host, same engine family:
+
+| quant | file bytes | decode tok/s |
+| --- | ---: | ---: |
+| `UD-Q2_K_XL` | 78.8 GB | **8.98** |
+| `UD-Q4_K_XL` | 111.3 GB | 8.07 |
+
+Q4 is 10% **slower** here. The difference is the type census, not the tier name:
+Flash-Next's "Q2" file is 51.7% IQ4_NL, which repacks fine, so it never paid the
+compute-bound penalty that made GLM's Q3 slow — leaving Q4 with 41% more bytes
+per token and no kernel efficiency to recover it.
+
+Run `tools/gguf_types.py` before predicting what a quant change will do. The
+tier name in the filename does not tell you which kernels will run.
+
 ## Published engineering bundles
 
 The repository now includes the source deltas and measured launch contracts,
