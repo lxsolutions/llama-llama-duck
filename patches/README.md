@@ -15,6 +15,13 @@ separate source line and must not be stacked on them. Verify downloads against
 [`SHA256SUMS`](SHA256SUMS), and see [`ATTRIBUTION.md`](ATTRIBUTION.md) for
 provenance.
 
+**Porting the CPU-NUMA backend to a model-support branch that lacks it** —
+including how to tell "not compiled in" from "not in the tree", and the
+`--list-devices` check that misleads if you forget the environment variable —
+is documented separately in [`PORTING.md`](PORTING.md). The build-249 CPU-NUMA
+patch has been verified to apply cleanly onto the `glm5next` support line
+(base `2e0e57f1`), which is a different lineage from its own base.
+
 ## Build-249 CPU-NUMA backend
 
 `llama.cpp-b249-cpu-numa.patch` adds an opt-in Linux CPU device for each NUMA
