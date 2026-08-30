@@ -303,6 +303,30 @@ cost more than the arithmetic. Always sweep; never assume all cores is best.
 If you are A/B-ing anything else, pin thread count across arms or this will
 swamp your result.
 
+## Aggregate vs per-stream: three of four clear 10 tok/s under concurrency
+
+Every other number here is single-stream. With `--cont-batching`, **aggregate**
+server throughput is a different and equally real figure:
+
+| model | single-stream | aggregate (concurrency) |
+| --- | ---: | ---: |
+| Qwen3.8-27B | **11.72** | — (already clears) |
+| Qwen3.8-Flash-Next | 6.69 | **17.50** (c=8) |
+| GLM-5.3 full | 6.50 | **10.05** (c=4) |
+| GLM-5.3-Flash | 3.66 | 5.43 (c=8) |
+
+Per-stream rates *fall* as concurrency rises (Flash-Next: 5.61 -> 2.19 tok/s from
+c=1 to c=8) while the total rises 3.1x. Both are true; say which you mean.
+
+The gain tracks the fixed-overhead finding exactly: models whose token time is
+mostly fixed cost gain most (Flash-Next, 88% fixed, gains 3.1x; GLM-5.3 full,
+50% fixed, gains 1.55x). Concurrency converts per-operation dispatch cost into
+useful work — the same lever MoE kernel fusion would pull, from the serving side.
+
+This also qualifies an earlier claim here that batching "does not rescue MoE
+decode": that was an isolated-kernel measurement, and end-to-end it substantially
+does. Details: [`benchmarks/concurrent-throughput.md`](benchmarks/concurrent-throughput.md).
+
 ## The most important result here is a wrong-answer bug, not a speedup
 
 `--split-mode tensor` **silently corrupts** output on the `qwen4exp`
@@ -478,6 +502,7 @@ not just the standalone diagnostic tools:
 | 78% extraction is achievable; mainline NUMA gets 33% | [`kernel efficiency ceiling`](benchmarks/kernel-efficiency-ceiling.md) |
 | A fixed ~92 ms/token, invariant across a 7.6x byte range | [`fixed per-token overhead`](benchmarks/fixed-per-token-overhead.md) |
 | **Tensor split silently corrupts `qwen4exp`** | [`qwen4exp corruption`](benchmarks/qwen4exp-tensor-split-corruption.md) |
+| Aggregate vs per-stream throughput under concurrency | [`concurrent throughput`](benchmarks/concurrent-throughput.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
@@ -496,6 +521,7 @@ before applying or rebasing them.
 | `tools/decode_bench.py` | decode tok/s from the server's own timings, plus draft acceptance |
 | `tools/sweep_config.sh` | one arm = one fresh server; prints NUMA placement and RssAnon/RssFile |
 | `tools/quality_probe.py` | four deterministic prompts with known answers — run before trusting any tok/s |
+| `tools/concurrent_bench.py` | per-stream vs aggregate vs wall-clock throughput at N concurrent requests |
 | `tools/active_bytes.py` | active bytes/token from the GGUF tensor table — scales experts by n_used/n_expert and excludes gathered embeddings |
 
 `decode_bench.py` reads `predicted_per_second` out of the server's `timings`
