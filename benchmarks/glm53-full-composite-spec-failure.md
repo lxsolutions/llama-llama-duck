@@ -60,6 +60,17 @@ Restored on the four-device path, 16 threads/node, 200-token generations,
 | --- | ---: |
 | raw, `speculative.n_max=0` | 3.78 |
 | **default `n_max=2`, `p_min=0`** | **5.11** |
+| final restored service, prose+code mix, n=4 | **5.32** (range 4.59–6.21) |
+
+Note the spread on that last row. Individual 200-token generations on this
+model vary about ±15% around the mean, which is larger than several of the
+configuration differences people try to tune. Any comparison here that turns on
+less than ~15% needs more repetitions than two, and several published
+single-repeat numbers — including some in this repository's earlier files —
+should be read with that in mind.
+
+Correctness was re-verified after restore (`17 * 23` -> `391`, and exact
+passage reproduction on the replay workload).
 
 Speculative depth swept live (request-scoped, no restart needed), novel prose:
 
