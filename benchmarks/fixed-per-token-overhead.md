@@ -109,6 +109,52 @@ step before choosing a target. The byte accounting says where the *bandwidth*
 goes; it does not say where the *time* goes, and on this host those are
 different questions.
 
+## Profiled: attention dominates, experts do not appear
+
+Rather than infer further, the dormant `GGML_CPU_OP_PROFILE` machinery in the
+GLM engine was enabled (`GGML_CPU_OP_PROFILE='*'` — note the filter is an
+op-name list and `*` is the only wildcard; `all` silently matches nothing) and a
+decode step captured on GLM-5.3 full.
+
+By operation type within the captured graph:
+
+| op | count | % of captured time |
+| --- | ---: | ---: |
+| `MUL_MAT` | 11 | **87.4%** |
+| `CONCAT` | 1 | 3.4% |
+| `LIGHTNING_INDEXER` | 1 | 3.3% |
+| `RMS_NORM` | 2 | 2.3% |
+| `FLASH_ATTN_EXT` | 1 | 2.2% |
+| `TOP_K` | 1 | 1.4% |
+
+By tensor:
+
+| % | tensor |
+| ---: | --- |
+| 28.6% | `blk.N.attn_output.weight` |
+| 17.8% | `blk.N.attn_q_a.weight` |
+| 10.1% | `blk.N.attn_q_b.weight` |
+| 10.1% | `blk.N.indexer.attn_q_b.weight` |
+| 4.8% | `blk.N.attn_kv_a_mqa.weight` |
+| 4.0% | `blk.N.attn_k_b.weight` |
+| 3.8% | `blk.N.attn_v_b.weight` |
+
+**Every entry in the top seven is an attention tensor — roughly 79% of captured
+time — and no `ffn_*_exps` op appears at all.** That is independent
+confirmation of the expert-count result above, reached by a completely different
+method: the routed-expert path is not where decode time goes on this host.
+
+`attn_output.weight` alone is 28.6%, consistent with the byte accounting that
+put dense attention at 14.62 GB of GLM-5.3 full's 33.97 GB/token — the single
+largest component, read in full every token regardless of routing.
+
+**Limitation, stated plainly:** the capture contains 17 nodes from one graph, not
+a whole 78-layer token, and the sampled layer is one of the dense early layers,
+which biases *against* seeing expert ops. Treat this as strong corroboration of
+the expert-count experiment rather than a complete decode breakdown. A full
+per-layer capture across a MoE layer is the obvious next step, and the machinery
+for it now has a documented invocation.
+
 ## Where to look
 
 Given the expert-count result above, the remaining candidates, in the order a
