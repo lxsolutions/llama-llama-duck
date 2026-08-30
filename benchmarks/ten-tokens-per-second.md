@@ -167,15 +167,67 @@ also logged `backend offload failed for seq_id=N; using CPU sampler`.
 
 A single 0% result looks like a bad download. **Two is a bug report.**
 
+## On the traffic these models actually serve, two of four clear 10
+
+Every number above is novel prose — the worst case for speculation. Agentic and
+coding traffic is repetitive: the model re-emits text it was given. Re-measuring
+on a file-reproduce-then-extend workload with `ngram-mod` (`n_match=8`):
+
+| model | novel prose | replay, `ngram-mod` | replay acceptance |
+| --- | ---: | ---: | ---: |
+| **Qwen3.8-27B** | 8.33 | **10.90 mean, 17.13 warm** | 43.6% -> 74.3% |
+| **GLM-5.3 full** | 5.32 | **12.92** (`draft-mtp` n18/p0.75) | 93.1% |
+| Qwen3.8-Flash-Next | 8.98 | 4.14 | **0.3%** |
+
+Qwen3.8-27B goes from 8.33 to 10.90 and **rises across the run** — 6.61, 8.97,
+17.13 on successive repetitions as context accumulates repetition to draft from.
+Mean accepted draft length reached **43.62 tokens per target forward pass**.
+That is the mechanism working exactly as intended, and it is why a single cold
+measurement understates `ngram-mod` badly.
+
+So on the traffic they serve, **Qwen3.8-27B and GLM-5.3 full both exceed 10
+tok/s**. On novel prose neither does. Same binary, same flags, same day — a 2x
+spread driven entirely by workload.
+
+### Flash-Next's speculation is broken in all three mechanisms
+
+| mechanism | acceptance |
+| --- | ---: |
+| `drluoto` MTP head (Q8_0, 4.14 GB) | 0.00000 |
+| `dzannotti` MTP head (Q4_K_M, 2.62 GB) | 0.00000 |
+| `ngram-mod`, replay workload | 0.003–0.005 |
+
+`ngram-mod` uses **no draft model at all** — it drafts from repetition already in
+the context. Scoring ~0.3% on the identical prompt where Qwen3.8-27B scores
+74.3% therefore cannot be blamed on a draft artifact. Combined with two
+independent MTP heads at exactly zero, this localizes the fault to the engine's
+speculative path for this architecture.
+
+Practical consequence: Flash-Next must run with `--spec-type none`. Every
+speculative arm tested made it 30–55% *slower*, and it is the one model here with
+no route past its bandwidth ceiling.
+
 ## Summary: what each model would need
 
-| model | gap to 10 tok/s | what it actually requires |
+| model | vs 10 tok/s | what it would still require |
 | --- | --- | --- |
-| Qwen3.8-Flash-Next | 1.11x | graph/kernel efficiency 35% -> 39%; or a working MTP path |
-| Qwen3.8-27B | 1.20x | efficiency 33% -> 40%, or a draft pass that runs at bandwidth |
-| GLM-5.3 full | met on replay (12.92); 1.9x on novel prose | impossible raw at Q4 (needs 99% of peak) — speculation only |
-| GLM-5.3-Flash | 5.0x | per-tensor sharding rules for `glm5next` (4x), then quant work |
+| **Qwen3.8-27B** | **met on replay** (10.90 mean / 17.13 warm); 1.20x short on novel prose | efficiency 33% -> 40%, or a draft pass that runs at bandwidth |
+| **GLM-5.3 full** | **met on replay** (12.92); 1.9x short on novel prose | impossible raw at Q4 (needs 99% of peak) — speculation only |
+| Qwen3.8-Flash-Next | 1.11x short, all workloads | fix the engine's speculative path for this arch; or efficiency 35% -> 39% |
+| GLM-5.3-Flash | 5.0x short | per-tensor sharding rules for `glm5next` (4x), then quant work |
 
-Three of the four are gated on the same thing: **whole-model decode extracts
-~33% of streaming bandwidth where the kernels alone reach 45%.** That is one
-problem, not four, and it is the highest-value target on this class of machine.
+Two of the four clear the bar on the traffic they serve. The two that do not are
+each blocked on a *specific, identified* engine defect rather than on tuning:
+Flash-Next's speculation returns ~0% acceptance in all three mechanisms, and
+`glm5next` has no tensor-parallel sharding rules so it runs on one socket of four.
+
+Underneath all of it sits one shared limit: **whole-model decode extracts ~33% of
+streaming bandwidth where the kernels alone reach 45%.** Closing that gap would
+put Qwen3.8-27B over 10 on novel prose too, and it is one problem rather than
+four — the highest-value target on this class of machine.
+
+### If you take one thing from this file
+
+Quote the workload with the number. The same binary, same flags, same host, same
+day gives Qwen3.8-27B **8.33 or 17.13 tok/s** depending only on whether the
+prompt is novel or repetitive. Benchmarks that do not say which are unfalsifiable.
