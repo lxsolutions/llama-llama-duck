@@ -121,6 +121,54 @@ buys MoE ~1.0–1.26x against dense's 2.5–6.7x) and with its observation that 
 `gemv` only becomes `gemm` above three rows. **The MoE expert-gather path, not
 memory bandwidth, is the binding constraint on three of these four models.**
 
+## `GGML_CPU_NUMA_POLL` is worth 7.7% on MoE, and the default is far too low
+
+Spin-wait length before a worker sleeps. With hundreds of tiny expert matmuls per
+token, wake-up latency is a large fraction of the work. Qwen3.8-Flash-Next,
+12 threads/node, everything else fixed:
+
+| `GGML_CPU_NUMA_POLL` | decode tok/s | run range |
+| ---: | ---: | --- |
+| 0 | 8.775 | 8.692–8.857 |
+| 50 | 8.980 | — |
+| 500 | 9.205 | 9.187–9.224 |
+| 2000 | 9.368 | 9.353–9.384 |
+| 10000 | 9.418 | 9.377–9.458 |
+| **100000** | **9.452** | 9.241–9.662 |
+
+Monotonic and tight, saturating around 10⁴. **+7.7% from one environment
+variable**, on a model where every configuration knob had already been swept.
+The previously published profiles used 50–100.
+
+Re-sweeping threads at the new poll did not move the optimum (t12 still best;
+t14 8.27, t16 8.25), so the two knobs are independent here.
+
+### The same sweep on Qwen3.8-27B did *not* reproduce — a variance lesson
+
+A first pass at poll `10000` on Qwen3.8-27B measured **10.379 tok/s** on novel
+prose (range 10.357–10.401), which would have cleared the 10 tok/s bar outright
+and been the headline of this file. It did not survive re-measurement:
+
+| run | poll | reps | mean | range |
+| --- | ---: | ---: | ---: | --- |
+| first | 10000 | 2 | **10.379** | 10.357–10.401 |
+| bracket | 3000 | 3 | 9.155 | 8.974–9.400 |
+| bracket | 30000 | 3 | 9.104 | 8.896–9.254 |
+| **verify** | **10000** | **6** | **8.616** | **7.084–9.400** |
+
+Six repetitions at the identical configuration span **7.08 to 9.40** — a 33%
+spread that swallows the entire apparent effect. The first result was a pair of
+lucky draws whose *internal* range (0.4%) looked reassuringly tight.
+
+**A narrow range within one short run says nothing about reproducibility.** This
+model carries an MTP draft, and speculative arms are far noisier than raw ones
+because acceptance varies per prompt. Flash-Next's poll curve above is credible
+precisely because it is monotonic across six settings; a single point is not.
+
+Treat any single-configuration claim on this host that rests on fewer than ~6
+repetitions as unproven, and be especially suspicious when it lands just past a
+target you were aiming at.
+
 ## Knobs that are exhausted (swept, no further gain)
 
 Qwen3.8-27B, four `CPU-NUMA` devices:

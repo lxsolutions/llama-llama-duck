@@ -9,7 +9,7 @@ machine-specific directories, credentials, or network addresses.
 | [`launch-glm53-full.sh`](launch-glm53-full.sh) | four `CPU-NUMA` devices | 16 cores/socket, poll 50, direct collective, 32K, Q8_0 KV, MTP default 2 |
 | [`launch-glm53-flash.sh`](launch-glm53-flash.sh) | one NUMA node, preferred memory | 32 cores, mmap, Flash Attention off, F16 KV |
 | [`launch-qwen38-27b.sh`](launch-qwen38-27b.sh) | four `CPU-NUMA` devices | plain Q4_0, 16 cores/node, poll 100, hugepages off, MTP depth 2 (prose) or ngram-mod (replay) |
-| [`launch-qwen38-flash-next.sh`](launch-qwen38-flash-next.sh) | four `CPU-NUMA` devices | 12 cores/node, repack, F16 KV, speculation off (`SINGLE_NODE=1` falls back to the old one-node profile) |
+| [`launch-qwen38-flash-next.sh`](launch-qwen38-flash-next.sh) | four `CPU-NUMA` devices | 12 cores/node, poll 100000, repack, F16 KV, speculation off (`SINGLE_NODE=1` falls back to the old one-node profile) |
 
 Set `LLAMA_SERVER` and `MODEL` before running a script. Full GLM and Qwen-27B
 also require `MTP_MODEL`. `PORT` defaults to 8080, `HOST` to 127.0.0.1, and

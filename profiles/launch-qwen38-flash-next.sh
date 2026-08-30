@@ -63,7 +63,11 @@ THREADS="${THREADS:-12}"
 
 export GGML_CPU_NUMA_DEVICES=1
 export GGML_CPU_NUMA_THREADS="$THREADS"
-export GGML_CPU_NUMA_POLL="${NUMA_POLL:-50}"
+# Spin-wait length before a worker sleeps. Measured +7.7% going 50 -> 100000 on
+# this MoE (8.98 -> 9.45), monotonic across six settings and saturating near
+# 10^4. The upstream-ish default of 50 is far too low when a token is hundreds
+# of tiny expert matmuls and wake-up latency dominates the work.
+export GGML_CPU_NUMA_POLL="${NUMA_POLL:-100000}"
 export GGML_CPU_NUMA_DIRECT_ALLREDUCE=1
 export GGML_CPU_NUMA_REPACK=1
 
