@@ -132,6 +132,45 @@ So this model is **capped at 6.69 tok/s until the sharding rules are written**.
 Not a tuning ceiling: an exhausted search over every arrangement that produces
 correct output.
 
+## Root cause, localized
+
+Qwen3.8-Flash-Next is a **hybrid attention/SSM** architecture. Layer 1 contains,
+alongside ordinary MoE and attention tensors:
+
+    blk.1.ssm_a            [48]           blk.1.ssm_alpha.weight  [2560, 48]
+    blk.1.ssm_beta.weight  [2560, 48]     blk.1.ssm_conv1d.weight [4, 10240]
+    blk.1.ssm_dt.bias      [48]           blk.1.ssm_norm.weight   [128]
+    blk.1.ssm_out.weight   [6144, 2560]
+
+The split-state function carries SSM patterns written for Mamba/Jamba-style
+architectures — `pattern_ssm_dt`, `pattern_ssm_a`, `pattern_ssm_alpha`,
+`pattern_ssm_beta`, `pattern_ssm_conv1d`, `pattern_ssm_out_weight`. These match
+`qwen4exp`'s tensors **by name while not sharing their semantics**, so the wrong
+split axes are applied and the output is silently wrong.
+
+This also explains the asymmetry with `glm5next`, which is refused rather than
+corrupted. `glm5next` factors its SSM output into `ssm_f_a`/`ssm_f_b` pairs and
+has **no `ssm_out.weight`**, so the reference lookup fails and it aborts.
+`qwen4exp` *does* have `ssm_out.weight`, so every lookup resolves, the rules
+apply cleanly, and nothing complains.
+
+**Name-based tensor classification across architectures is the underlying
+hazard.** A pattern like `blk\.\d*\.ssm_out.weight` is an assertion about
+semantics dressed up as a string match.
+
+### An attempted one-line fix, and why it is not one
+
+Forcing `qwen4exp`'s `ssm_*` tensors to `GGML_BACKEND_SPLIT_AXIS_MIRRORED`
+(replication is always arithmetically safe, and these tensors are small) does not
+work — it fails at load:
+
+    ggml-backend-meta.cpp:651: GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN)
+
+The SSM tensors are **load-bearing in the split reference graph**: other tensors
+name them as their axis-0 reference, so making them mirrored leaves those
+dependents unresolvable. A correct fix has to assign axes to the SSM group and
+its dependents together, derived from the architecture's dataflow. Reverted.
+
 ## Recommended handling
 
 1. Do not use `--split-mode tensor` with `qwen4exp`. Use the single-node profile
