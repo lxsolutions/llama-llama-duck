@@ -94,6 +94,44 @@ under.
 The gate is therefore load-bearing and correctly placed. It is a record of work
 not yet done, not conservatism to be switched off.
 
+## Attempted: mirror the SSM block (got further, same wall)
+
+The fix suggested by LFM2's precedent — run the whole SSM block mirrored, since
+replication is always arithmetically safe and the block is small (~1 GB) — was
+implemented and tested. `glm5next` looked like a better candidate than
+`qwen4exp` because it **has** a real `attn_output.weight`, so attention should
+still anchor and split normally rather than routing through `ssm_out`.
+
+It cleared two blockers that had stopped previous attempts:
+
+1. `GGML_ASSERT(!suffix_fallback.empty())` in `load_tensors` — **passed**. The
+   mirror rule removed the broken anchor lookup entirely.
+2. `SPLIT_MODE_TENSOR requires flash_attn to be enabled` — a *separate* gate,
+   hit only after the first was cleared. Note this contradicts the published
+   single-node profile for this model, which requires `--flash-attn off`; the
+   two paths want opposite settings.
+
+and then failed at the third:
+
+    ggml-backend-meta.cpp:537: GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN)
+
+which is the **same graph-consistency failure** that blocks `qwen4exp`
+([`qwen4exp-tensor-split-corruption.md`](qwen4exp-tensor-split-corruption.md)):
+a fused operation receiving sources whose split states disagree, because
+mirroring the SSM block propagates a mirrored input into ops whose other inputs
+are split.
+
+**Both hybrid attention/SSM architectures fail identically**, despite differing
+in exactly the way that was expected to matter. That is now two independent
+datapoints for the same conclusion: in this framework, partially mirroring an
+SSM block interleaved with split attention cannot be made consistent, and
+mirroring far enough to fix it removes the benefit.
+
+Their exclusion from `llm_arch_supports_sm_tensor()` is therefore correct, and
+`qwen4exp`'s absence from that list was the bug — not `glm5next`'s presence.
+
+Reverted; engine verified back to correct single-node output.
+
 ## Scope of the actual fix
 
 1. Add `glm5next` sharding rules for the three tensor groups above, deriving each
