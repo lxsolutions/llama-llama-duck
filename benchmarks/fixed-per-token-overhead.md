@@ -155,6 +155,32 @@ the expert-count experiment rather than a complete decode breakdown. A full
 per-layer capture across a MoE layer is the obvious next step, and the machinery
 for it now has a documented invocation.
 
+### And attention is already repacked, so there is no configuration win there
+
+The obvious follow-up — "attention dominates, so turn on attention repacking" —
+was checked and is already the case. In `repack.cpp`:
+
+```c
+const bool eligible_matrix = ggml_n_dims(cur) == 2 && (
+    strstr(cur->name, ".attn_") != nullptr ||            // unconditional
+    (x86_vnni_ffn_enabled    && strstr(cur->name, ".ffn_") != nullptr) ||
+    (x86_vnni_output_enabled && strcmp(cur->name, "output.weight") == 0));
+```
+
+`.attn_` tensors are eligible unconditionally once `GGML_CPU_Q8_0_REPACK=1`,
+which the production profile sets. `attn_output.weight` is `[4096, 6144]`, so it
+satisfies both shape constraints (`ne[0] % 32 == 0`, `ne[1] % 8 == 0`) and is
+repacked. The `_FFN` and `_OUTPUT` flags gate *additional* experiments, not
+attention.
+
+So the 28.6% attributed to `attn_output.weight` is its **already-optimized**
+cost, on the repacked AVX-512/VNNI path, with `X_TILE=auto`. There is no unset
+switch behind it. Improving it means a better attention kernel or fewer
+attention bytes — a smaller quant for those tensors specifically, which the
+Unsloth UD scheme deliberately keeps high.
+
+That is the end of the configuration search on this host.
+
 ## Where to look
 
 Given the expert-count result above, the remaining candidates, in the order a
