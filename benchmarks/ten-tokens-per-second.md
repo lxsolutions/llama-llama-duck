@@ -14,12 +14,32 @@ Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second
 "Active GB/tok" is the corrected figure — routed experts scaled by
 `n_used / n_expert`, gathered embeddings excluded (see the correction below):
 
-| model | quant | active GB/tok | start | best | raw ceiling @360 GB/s |
+| model | quant | active GB/tok | start | best (verified) | raw ceiling @360 GB/s |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **8.33** prose / **10.90** replay | 22.5 |
-| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **9.21** | 80.3 |
+| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **9.45** | 80.3 |
+| Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **8.62** prose / ~10.9 replay | 22.5 |
 | GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **5.32** prose / **6.25** replay | **10.6** |
-| GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (locked to 1 socket) |
+| GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (**9.8 on its one socket**) |
+
+**No model reliably exceeds 10 tok/s on novel prose.** Qwen3.8-27B exceeded it on
+replay traffic (10.90 mean) but with a 6.6–17.1 spread across repetitions, so
+that is a workload-and-luck result rather than a dependable rate. Every figure
+above is the mean of at least six repetitions except where noted.
+
+Two of the four are blocked by arithmetic rather than tuning:
+
+- **GLM-5.3 full** is already the best extractor here at 50% of achievable
+  bandwidth. 10 tok/s at 33.97 GB/token needs 340 GB/s, i.e. **94% extraction** —
+  no kernel reaches that. Its only route is a speculative multiplier near 1.9x
+  against the 1.18x measured.
+- **GLM-5.3-Flash** is confined to one socket because `glm5next` has no
+  tensor-parallel sharding rules. One socket delivers ~90 GB/s, so at
+  9.16 GB/token its ceiling is **9.8 tok/s even at 100% efficiency** — below the
+  bar before any inefficiency. It cannot clear 10 without the sharding work,
+  full stop.
+
+The other two are limited by the MoE expert-gather path, not by memory: at
+9.45 tok/s Flash-Next is using **11% of the machine**.
 
 ## The arithmetic nobody can argue with
 
@@ -139,6 +159,10 @@ token, wake-up latency is a large fraction of the work. Qwen3.8-Flash-Next,
 Monotonic and tight, saturating around 10⁴. **+7.7% from one environment
 variable**, on a model where every configuration knob had already been swept.
 The previously published profiles used 50–100.
+
+It does **not** generalize. GLM-5.3 full, also MoE and with even more expert
+matmuls per token (8 of 256 experts x 78 layers = 624), measured *worse* at poll
+10000 than at 50 (4.97 vs 5.32 over six reps each). Sweep it per model.
 
 Re-sweeping threads at the new poll did not move the optimum (t12 still best;
 t14 8.27, t16 8.25), so the two knobs are independent here.
