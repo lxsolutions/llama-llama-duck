@@ -106,6 +106,32 @@ tok/s number computed from a token stream nobody inspected is not a measurement
 of anything. `tools/quality_probe.py` is four deterministic prompts with known
 answers; running it once per configuration would have caught this immediately.
 
+## Every correct configuration, exhaustively (quiet host)
+
+With tensor-split ruled out, the remaining question is whether any *correct*
+multi-socket arrangement recovers the bandwidth. None does:
+
+| configuration | threads | tok/s | correct? |
+| --- | ---: | ---: | :--: |
+| **1 node, `--membind=0`** | **32** | **6.69** | yes |
+| 1 node | 24 | 6.43 | yes |
+| 1 node | 16 | 5.65 | yes |
+| 4 devices, `--split-mode layer` | 16/dev | 5.41 | yes |
+| 2 nodes, `--membind=0,1` | 48 | 3.47 | yes |
+| 2 nodes, `--membind=0,1` | 64 | 3.34 | yes |
+| 4 nodes, `--interleave=all` | 96 | 2.68 | yes |
+| 4 devices, `--split-mode tensor` | 12/dev | ~9.6 | **NO — garbage** |
+
+Handing the ordinary CPU backend more sockets makes it **worse**, roughly
+halving throughput at two nodes and more at four, because a single thread pool
+spanning sockets pays cross-socket memory latency and synchronization on every
+operation. That is precisely the problem the per-socket device backend exists to
+solve — and on this architecture that backend is the one that corrupts.
+
+So this model is **capped at 6.69 tok/s until the sharding rules are written**.
+Not a tuning ceiling: an exhausted search over every arrangement that produces
+correct output.
+
 ## Recommended handling
 
 1. Do not use `--split-mode tensor` with `qwen4exp`. Use the single-node profile
