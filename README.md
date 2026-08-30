@@ -303,6 +303,25 @@ cost more than the arithmetic. Always sweep; never assume all cores is best.
 If you are A/B-ing anything else, pin thread count across arms or this will
 swamp your result.
 
+## Four models on one host, and what actually moved each one
+
+All four measured on the same 4-socket box the same day, same harness, decode
+tokens/second at `temperature=0`:
+
+| model | before | after | what changed |
+| --- | ---: | ---: | --- |
+| Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **8.98** | un-pinned from one socket; 12 threads/node |
+| Qwen3.8-27B (dense, Q8_K_XL) | — | **6.12** | 16 threads/node; repack neutral |
+| GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.11** | removed a composite `--spec-type` that failed every request |
+| GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
+
+The largest single win was not a kernel — it was noticing a model was pinned to
+one of four sockets. The second largest was noticing a server that answered
+`/health` with `ok` was failing 100% of completions.
+
+Neither would have been found by tuning. Both were found by checking what the
+running system was actually doing.
+
 ## Check what fraction of the machine your model is actually on
 
 The single largest win measured in this repository was not a kernel or a patch.
@@ -418,6 +437,20 @@ before applying or rebasing them.
 | `tools/kbench_id.cpp` | `MUL_MAT` (dense) vs `MUL_MAT_ID` (MoE) repack comparison |
 | `tools/gguf_types.py` | parse GGUF tensor types and repack-eligibility |
 | `tools/prefetch-model.sh` | warm page cache before mmap load |
+| `tools/decode_bench.py` | decode tok/s from the server's own timings, plus draft acceptance |
+| `tools/sweep_config.sh` | one arm = one fresh server; prints NUMA placement and RssAnon/RssFile |
+
+`decode_bench.py` reads `predicted_per_second` out of the server's `timings`
+block rather than timing the HTTP round trip, so client latency and prompt
+processing do not contaminate the decode number. It also surfaces
+`draft_acceptance_rate` — check it is nonzero before believing any speculative
+result.
+
+`sweep_config.sh` gives each arm a fresh process. A server that has already
+generated tokens beats a cold one, so reusing a process across arms flatters
+whichever ran second. It also dumps page placement and `RssAnon` vs `RssFile`,
+which is how you confirm a sharded run actually copied weights into node-bound
+memory instead of leaving them on the shared mmap.
 
 Build instructions are at the top of each file. The C++ tools link against a
 `llama.cpp` build's `libggml*.so`.

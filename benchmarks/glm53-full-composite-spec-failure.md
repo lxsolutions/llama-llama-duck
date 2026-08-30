@@ -83,6 +83,30 @@ not be treated as a general default.
 costs nothing but request time — no reload. Sweep them before touching anything
 that requires a 20-minute model reload.
 
+## Threads per node: no effect here, which is itself the finding
+
+Qwen3.8-Flash-Next gains 14% on this host by dropping from 16 to 12 threads per
+NUMA node. That does not transfer:
+
+| threads/node | raw tok/s | `n2/p0` tok/s (matched prose) |
+| ---: | ---: | ---: |
+| 12 | 3.98 | 4.99 |
+| 16 | 3.78 | 5.11 |
+
+The two configurations are within the run-to-run spread of each other — single
+prose repeats ranged 4.34–5.27 at 12 threads, so a 2% gap between means is not
+a result. Production was returned to 16, the configuration the rest of this
+model's tuning was derived at.
+
+Worth stating plainly because the temptation after the Flash-Next result is to
+apply 12 everywhere. Three models, three answers: Flash-Next wants 12
+(decisively), Qwen3.8-27B wants 16, GLM-5.3 full does not care. **Each of these
+cost a measurement to establish and none of them predicted the others.**
+
+Note the sweep is expensive here in a way it is not elsewhere — every arm costs
+a ~20 minute reload, against seconds for a request-scoped speculative
+parameter. Order your sweeps by reload cost, not by expected effect size.
+
 ## Operational notes for a ~470 GB model
 
 **Load takes 21 minutes and peaks well above its steady state.** RSS climbed to
