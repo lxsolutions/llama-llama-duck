@@ -1,5 +1,24 @@
 # What it takes to reach 10 tok/s on a 4-socket CPU
 
+> ## RETRACTION (read first)
+>
+> Every **Qwen3.8-Flash-Next** figure in this file measured on the four-device
+> `--split-mode tensor` path — 7.51, 7.71, 8.98, 9.21, 9.45, 9.65, and a 10.067
+> that appeared to clear the target — **is void**. That configuration silently
+> produces garbage output on the `qwen4exp` architecture: fluent-looking token
+> streams that are pure nonsense, with no error and no warning. The numbers are
+> the speed of producing garbage, and the corrupt path is *faster* than the
+> correct one, so a throughput-only campaign selects for it.
+>
+> The only valid figure for this model is the single-node one: **6.68 tok/s**.
+>
+> Evidence, scope, and the tell that was visible the whole time (`content_chars:
+> 0` on every corrupt run):
+> [`qwen4exp-tensor-split-corruption.md`](qwen4exp-tensor-split-corruption.md).
+>
+> Qwen3.8-27B (`qwen35`) and GLM-5.3 full (`glm-dsa`) were re-verified on their
+> tensor-split configurations and are **correct**. Their numbers stand.
+
 Target: **>10 decode tok/s** on four models, one host — 4 x Xeon Gold 6242,
 64 physical cores, 755 GiB DDR4-2400 across 24 populated channels, 4 NUMA nodes,
 no accelerator. Theoretical peak 460.8 GB/s; **measured achievable 360 GB/s**
@@ -16,7 +35,7 @@ Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second
 
 | model | quant | active GB/tok | start | best (verified) | raw ceiling @360 GB/s |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **9.45** | 80.3 |
+| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **6.68** (4-device path VOID) | 80.3 |
 | Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **8.62** prose / ~10.9 replay | 22.5 |
 | GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **5.32** prose / **6.25** replay | **10.6** |
 | GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (**9.8 on its one socket**) |
@@ -38,8 +57,10 @@ Two of the four are blocked by arithmetic rather than tuning:
   bar before any inefficiency. It cannot clear 10 without the sharding work,
   full stop.
 
-The other two are limited by the MoE expert-gather path, not by memory: at
-9.45 tok/s Flash-Next is using **11% of the machine**.
+Qwen3.8-Flash-Next is limited by the MoE expert-gather path rather than memory —
+at its valid single-node 6.68 tok/s it uses 8% of the machine — but its route to
+more throughput is currently *blocked on correctness*, not on tuning: the
+four-device path that would give it bandwidth corrupts its output.
 
 ## The arithmetic nobody can argue with
 

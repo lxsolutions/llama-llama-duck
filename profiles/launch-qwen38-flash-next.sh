@@ -8,6 +8,14 @@
 # Requires an engine built with the CPU-NUMA device backend. Verify with:
 #   GGML_CPU_NUMA_DEVICES=1 llama-server --list-devices
 # which must list CPU-NUMA0..N. Without it, fall back to SINGLE_NODE=1 below.
+#
+# !! qwen4exp AND TENSOR SPLIT ARE NOT SAFE TOGETHER !!
+# --split-mode tensor silently corrupts this architecture's output: fluent
+# nonsense, no error, and ~45% FASTER than the correct path, so throughput
+# tuning actively selects for it. See
+# benchmarks/qwen4exp-tensor-split-corruption.md.
+# SINGLE_NODE=1 is therefore the DEFAULT here until sharding rules exist.
+# Run tools/quality_probe.py against any configuration before trusting its tok/s.
 set -euo pipefail
 
 : "${LLAMA_SERVER:?set LLAMA_SERVER to llama-server}"
@@ -42,7 +50,7 @@ if [[ "${SPEC_TYPE:-none}" == *ngram-mod* ]]; then
 fi
 
 # ---- single-node fallback for engines without the CPU-NUMA backend ----
-if [[ "${SINGLE_NODE:-0}" == "1" ]]; then
+if [[ "${SINGLE_NODE:-1}" == "1" ]]; then
   command -v numactl >/dev/null || { echo "numactl is required" >&2; exit 1; }
   node="${NUMA_NODE:-0}"
   exec numactl --cpunodebind="$node" --membind="$node" \

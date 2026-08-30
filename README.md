@@ -303,6 +303,33 @@ cost more than the arithmetic. Always sweep; never assume all cores is best.
 If you are A/B-ing anything else, pin thread count across arms or this will
 swamp your result.
 
+## The most important result here is a wrong-answer bug, not a speedup
+
+`--split-mode tensor` **silently corrupts** output on the `qwen4exp`
+architecture (Qwen3.8-Flash-Next). Same binary, same model file, same prompt,
+`temperature=0`:
+
+| configuration | "What is 17 * 23?" |
+| --- | --- |
+| one NUMA node | `17 × 23 = 391` |
+| four devices, tensor split | `ggio **.** (!(( (!(( (!(( (!((...` |
+
+No error, no warning, no crash — and the corrupt path is **~45% faster**, so a
+throughput-driven tuning campaign selects for it. This one did, across a dozen
+sweeps, and every Flash-Next number previously published here was void as a
+result.
+
+`llm_arch_supports_sm_tensor()` is an **exclusion list**: `glm5next` is named and
+correctly refused, `qwen4exp` is not named and is therefore silently permitted.
+Default-allow is the wrong polarity when the failure mode is fluent nonsense.
+Qwen3.8-27B (`qwen35`) and GLM-5.3 full (`glm-dsa`) were re-verified and are
+correct.
+
+Full evidence:
+[`benchmarks/qwen4exp-tensor-split-corruption.md`](benchmarks/qwen4exp-tensor-split-corruption.md).
+Run [`tools/quality_probe.py`](tools/quality_probe.py) against any configuration
+before trusting its tok/s.
+
 ## Four models on one host, and what actually moved each one
 
 All four measured on the same 4-socket box the same day, same harness, decode
@@ -310,7 +337,7 @@ tokens/second at `temperature=0`:
 
 | model | before | after | what changed |
 | --- | ---: | ---: | --- |
-| Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **9.65** | un-pinned from one socket; 12 threads/node; NUMA poll 50 -> 100 (its clamped maximum) |
+| Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **6.68** | no change — the faster 4-device path **silently corrupts output** |
 | Qwen3.8-27B (dense) | 6.12 | **8.62** prose / ~10.9 replay | Q8_K_XL -> Q4_0; MTP at depth 2; ngram-mod on replay |
 | GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.32** prose / **6.25** replay | removed a composite `--spec-type` that failed every request |
 | GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
@@ -450,6 +477,7 @@ not just the standalone diagnostic tools:
 | Why `glm5next` cannot tensor-parallel (exact tensor) | [`glm5next TP blocker`](benchmarks/glm5next-tensor-parallel-blocker.md) |
 | 78% extraction is achievable; mainline NUMA gets 33% | [`kernel efficiency ceiling`](benchmarks/kernel-efficiency-ceiling.md) |
 | A fixed ~92 ms/token, invariant across a 7.6x byte range | [`fixed per-token overhead`](benchmarks/fixed-per-token-overhead.md) |
+| **Tensor split silently corrupts `qwen4exp`** | [`qwen4exp corruption`](benchmarks/qwen4exp-tensor-split-corruption.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
@@ -467,6 +495,7 @@ before applying or rebasing them.
 | `tools/prefetch-model.sh` | warm page cache before mmap load |
 | `tools/decode_bench.py` | decode tok/s from the server's own timings, plus draft acceptance |
 | `tools/sweep_config.sh` | one arm = one fresh server; prints NUMA placement and RssAnon/RssFile |
+| `tools/quality_probe.py` | four deterministic prompts with known answers — run before trusting any tok/s |
 | `tools/active_bytes.py` | active bytes/token from the GGUF tensor table — scales experts by n_used/n_expert and excludes gathered embeddings |
 
 `decode_bench.py` reads `predicted_per_second` out of the server's `timings`
