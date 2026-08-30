@@ -94,6 +94,31 @@ not be treated as a general default.
 costs nothing but request time — no reload. Sweep them before touching anything
 that requires a 20-minute model reload.
 
+## Speculative sweep, re-run on a verified-quiet host
+
+The earlier depth sweep was taken on a contended box. Re-run at 99% idle,
+request-scoped so no reload was needed:
+
+| `n_max` / `p_min` | decode tok/s |
+| --- | ---: |
+| 0 (no speculation) | 4.691 |
+| **2 / 0** | **6.349** |
+| 32 / 0.85 | 5.630 |
+| 18 / 0.75 | 5.239 |
+| 8 / 0.5 | 4.340 |
+
+`n=2, p=0` remains the winner and the ordering is unchanged, so the original
+conclusion survives a clean re-measurement. What the quiet run adds is a
+trustworthy **speculative multiplier of 1.35x** (4.691 -> 6.349), against 1.18x
+measured under load.
+
+That number closes the question for this model. Raw decode at 4.691 tok/s is 44%
+of the 10.6 tok/s ceiling its 33.97 GB/token allows. Reaching 10 tok/s while
+keeping the same 1.35x multiplier needs raw decode at 7.4, i.e. **70%
+extraction** — a 1.6x kernel improvement, not a configuration change. Deeper
+drafts do not substitute: acceptance rises to 72–77% at `n=18` but throughput
+falls, because draft passes cost more than the extra accepted tokens return.
+
 ## Threads per node: no effect here, which is itself the finding
 
 Qwen3.8-Flash-Next gains 14% on this host by dropping from 16 to 12 threads per
