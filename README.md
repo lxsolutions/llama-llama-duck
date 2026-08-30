@@ -316,12 +316,16 @@ tokens/second at `temperature=0`:
 | GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
 
 Chasing a **10 tok/s** bar across all four produced the most useful single
-number in this repository: whole-model decode extracts about **one third** of
-streaming bandwidth (33–37%) on every model measured, while the kernels in
-isolation reach **45%**. Three of the four models are gated on that same gap —
-it is one problem, not four. GLM-5.3 full is gated on something stricter:
-10 tok/s at its 36 GB/token needs 360 GB/s, i.e. 99% of peak, so it is
-unreachable without speculation regardless of kernel quality.
+number in this repository, and it is not a tok/s figure. On the same host, same
+model, same quant, `ik_llama.cpp` extracts **78%** of the bandwidth available to
+it while mainline's CPU-NUMA path extracts **33%**. That rules out a hardware
+explanation for the gap: **2.4x is demonstrably reachable on this silicon.**
+
+Applied to the 360 GB/s NUMA-local ceiling, that would put Flash-Next at ~62,
+GLM-5.3-Flash at ~30, and Qwen3.8-27B at ~17.6 tok/s. GLM-5.3 full stays the
+exception — at 33.97 GB per token its absolute ceiling is 10.6 tok/s no matter
+how good the kernels get, so it needs a working speculative multiplier rather
+than faster matmuls.
 
 Full arithmetic, the exhausted-knob table, and what each model would still
 need: [`benchmarks/ten-tokens-per-second.md`](benchmarks/ten-tokens-per-second.md).
@@ -435,6 +439,7 @@ not just the standalone diagnostic tools:
 | Moving the CPU-NUMA backend to another branch | [`porting guide`](patches/PORTING.md) |
 | What a 10 tok/s target actually requires | [`ten tok/s analysis`](benchmarks/ten-tokens-per-second.md) |
 | Why `glm5next` cannot tensor-parallel (exact tensor) | [`glm5next TP blocker`](benchmarks/glm5next-tensor-parallel-blocker.md) |
+| 78% extraction is achievable; mainline NUMA gets 33% | [`kernel efficiency ceiling`](benchmarks/kernel-efficiency-ceiling.md) |
 
 Patch bundles target exact upstream commits and are intentionally separate
 where their source bases differ. Start with [`patches/README.md`](patches/README.md)
