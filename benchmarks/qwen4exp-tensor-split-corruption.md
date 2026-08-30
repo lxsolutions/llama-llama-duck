@@ -35,6 +35,30 @@ The only difference is the split mode.
 Not a chat-template problem: identical garbage with and without `--jinja`.
 Not a quant problem: the same file is correct on the single-node path.
 
+## `--split-mode layer` is correct — the fault is tensor sharding specifically
+
+Same model, same four `CPU-NUMA` devices, same binary, changing only the split
+mode:
+
+| split mode | output | tok/s |
+| --- | --- | ---: |
+| `tensor` | `ggio **.** (!(( (!((...` | 9.65 |
+| **`layer`** | **`17 × 23 = 391`** / Canberra / valid syllogism | 5.41 |
+| none (single node) | `17 × 23 = 391` / Canberra / valid syllogism | 6.69 |
+
+This narrows the bug usefully. The architecture loads, executes and produces
+correct results on the multi-device backend when whole layers are assigned to
+devices. It only breaks when individual tensors are sharded. The model, the
+quant, the NUMA device backend, the collectives and the graph are all fine —
+**the defect is in the per-tensor split rules for `qwen4exp`**, exactly as the
+`glm5next` gate exists to prevent.
+
+`layer` is also 19% *slower* than a single node here, since batch-1 decode
+executes layers sequentially and gains no compute parallelism while paying
+cross-device activation transfers. So it is a correctness datapoint, not a
+workaround: the fastest correct configuration for this model remains one NUMA
+node.
+
 ## Scope — this architecture only
 
 Checked every model in this repository on its own tensor-split configuration:
