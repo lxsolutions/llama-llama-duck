@@ -83,6 +83,31 @@ Q4_0 extraction is *lower* (119 GB/s) than Q8's (192 GB/s) — the dequant cost
 partly cancels the byte saving. **Byte reduction and kernel efficiency trade
 against each other; neither alone predicts throughput.**
 
+### The quant curve has an interior optimum, and Q4_0 is it
+
+Full sweep on Qwen3.8-27B, same host, same engine, same MTP head:
+
+| quant | file bytes | raw tok/s | +MTP tok/s | achieved GB/s (raw) |
+| --- | ---: | ---: | ---: | ---: |
+| UD-Q3_K_XL | 13.1 GB | 5.25 | 6.08 | 69 |
+| **Q4_0** | **16.1 GB** | **7.42** | **8.33** | **119** |
+| UD-Q4_K_XL | 17.6 GB | — | 7.86 | — |
+| UD-Q8_K_XL | 31.4 GB | 6.12 | — | 192 |
+
+Going *down* from Q4_0 to Q3_K_XL costs 29% throughput while saving 18% of the
+bytes — Q3_K extraction collapses to 69 GB/s. Going *up* to UD-Q4_K_XL costs 6%
+despite similar size, consistent with plain Q4_0's much higher repack coverage
+(~86% of bytes anonymous vs the ~25% previously measured for a UD Q4 variant).
+
+So the quant curve is not monotonic in either direction and the optimum is
+interior. **Do not assume a smaller quant is faster.** Three separate models in
+this repository now show the same thing, with the optimum in a different place
+each time: Q4_0 for 27B, Q2_K_XL for Flash-Next, Q4_K_XL for GLM-5.3 full.
+
+Note also that UD-Q3_K_XL had *higher* draft acceptance (61.8%) than Q4_0
+(56.5%) and was still far slower — one more case where acceptance moved opposite
+to throughput.
+
 ## `GGML_CPU_REPACK` is a build option, not a runtime switch
 
 Worth stating because it invalidates an obvious experiment. Running the same
