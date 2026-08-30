@@ -72,6 +72,14 @@ host's 360. Concurrency cannot substitute for the three sockets it cannot reach.
   with `--parallel 8` against 6.69 with `--parallel 1`, because the KV cache is
   divided among slots. Match `--parallel` to expected concurrency rather than
   setting it high speculatively.
+- **`--parallel N` divides `--ctx-size` by N**, and that bites before the
+  throughput does. GLM-5.3 full at `--ctx-size 32768 --parallel 4` gives each
+  request **8192** tokens, and a long reasoning chain then overruns its slot and
+  returns a 500 mid-conversation. If you want both the aggregate throughput and
+  the context, raise `--ctx-size` to `N x` the per-request window you need — and
+  budget the KV cache for it. A coding assistant that silently loses three
+  quarters of its context is a worse outcome than a slower one, so this host's
+  production profile stays at `--parallel 1`.
 
 ## Reproducing
 
