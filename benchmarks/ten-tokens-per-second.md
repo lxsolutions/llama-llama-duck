@@ -15,7 +15,7 @@ Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second
 | --- | --- | ---: | ---: | ---: | ---: |
 | Qwen3.8-27B | Q4_0, 16.1 GB | ~16 GB | 6.12 | **8.33** | 22.8 |
 | Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB | ~14 GB | 6.68 | **8.98** | ~26 |
-| GLM-5.3 full | Q4_K_XL, 467 GB | ~36 GB | 0 (broken) | **5.32** general / **12.92** replay | **10.1** |
+| GLM-5.3 full | Q4_K_XL, 467 GB | ~36 GB | 0 (broken) | **5.32** general / **6.25** replay | **10.1** |
 | GLM-5.3-Flash | IQ2_XXS, 102 GB | ~14 GB | — | **2.02** | ~26 (locked) |
 
 ## The arithmetic nobody can argue with
@@ -36,10 +36,11 @@ figure that a *pure streaming benchmark* only just achieves. Any claim of >10
 tok/s on this model is either speculative decoding, a smaller quant, or a
 measurement error.
 
-Speculation is the legitimate way past it, and it works: 12.92 tok/s on agentic
-replay at 93% draft acceptance, because K accepted tokens are emitted per single
-target forward pass. That is a real >10 result, on the traffic it was tuned for.
-It does not transfer to novel prose, where the same model runs 5.32.
+Speculation is the only legitimate way past that wall, since K accepted tokens
+are emitted per single target forward pass. It does help — 5.32 -> 6.25 moving
+from novel prose to replay — but the measured multiplier on this host is 1.18x,
+not the ~2.4x that clearing 10 would require. (Earlier notes here record 12.92;
+that figure did not reproduce — see below.)
 
 **State the workload with the number, or the number means nothing.**
 
@@ -173,11 +174,11 @@ Every number above is novel prose — the worst case for speculation. Agentic an
 coding traffic is repetitive: the model re-emits text it was given. Re-measuring
 on a file-reproduce-then-extend workload with `ngram-mod` (`n_match=8`):
 
-| model | novel prose | replay, `ngram-mod` | replay acceptance |
+| model | novel prose | replay | replay acceptance |
 | --- | ---: | ---: | ---: |
-| **Qwen3.8-27B** | 8.33 | **10.90 mean, 17.13 warm** | 43.6% -> 74.3% |
-| **GLM-5.3 full** | 5.32 | **12.92** (`draft-mtp` n18/p0.75) | 93.1% |
-| Qwen3.8-Flash-Next | 8.98 | 4.14 | **0.3%** |
+| **Qwen3.8-27B** (`ngram-mod`) | 8.33 | **10.90 mean, 17.13 warm** | 43.6% -> 74.3% |
+| GLM-5.3 full (`draft-mtp` n18/p0.75) | 5.32 | 6.25 | 72.8–77.5% |
+| Qwen3.8-Flash-Next (`ngram-mod`) | 8.98 | 4.14 | **0.3%** |
 
 Qwen3.8-27B goes from 8.33 to 10.90 and **rises across the run** — 6.61, 8.97,
 17.13 on successive repetitions as context accumulates repetition to draft from.
@@ -185,9 +186,26 @@ Mean accepted draft length reached **43.62 tokens per target forward pass**.
 That is the mechanism working exactly as intended, and it is why a single cold
 measurement understates `ngram-mod` badly.
 
-So on the traffic they serve, **Qwen3.8-27B and GLM-5.3 full both exceed 10
-tok/s**. On novel prose neither does. Same binary, same flags, same day — a 2x
-spread driven entirely by workload.
+**One model, not two, cleared 10 tok/s under measurement here.**
+
+### A 12.92 figure for GLM-5.3 full that did not reproduce
+
+Earlier notes in this repository record GLM-5.3 full at **12.92 tok/s** on an
+agentic replay suite at 93.07% acceptance. Re-measured on the restored service
+with the same `n_max=18 / p_min=0.75` profile, a file-reproduce replay workload
+gave **6.25 tok/s** (range 5.56–6.83) at 72.8–77.5% acceptance and 5.84–7.50
+accepted tokens per target pass.
+
+The mechanism is clearly working — acceptance and draft length are both healthy —
+but the throughput is less than half the recorded figure. The two runs used
+different replay suites (theirs ~1,400 tokens with warm reasoning context, this
+one ~500 tokens), and the 27B result above shows how strongly warm-up matters,
+so this is not necessarily a contradiction. It is, however, **unreproduced**, and
+the 12.92 number should not be quoted as this host's replay throughput without
+re-deriving it from a published prompt set.
+
+Treat GLM-5.3 full as **5.32 novel / 6.25 replay** until someone reproduces
+better with a suite they can publish.
 
 ### Flash-Next's speculation is broken in all three mechanisms
 
@@ -212,12 +230,14 @@ no route past its bandwidth ceiling.
 | model | vs 10 tok/s | what it would still require |
 | --- | --- | --- |
 | **Qwen3.8-27B** | **met on replay** (10.90 mean / 17.13 warm); 1.20x short on novel prose | efficiency 33% -> 40%, or a draft pass that runs at bandwidth |
-| **GLM-5.3 full** | **met on replay** (12.92); 1.9x short on novel prose | impossible raw at Q4 (needs 99% of peak) — speculation only |
+| GLM-5.3 full | 1.6x short on replay (6.25), 1.9x on novel prose | impossible raw at Q4 (needs 99% of peak) — speculation only, and its measured multiplier is 1.18x not the 2.4x once recorded |
 | Qwen3.8-Flash-Next | 1.11x short, all workloads | fix the engine's speculative path for this arch; or efficiency 35% -> 39% |
 | GLM-5.3-Flash | 5.0x short | per-tensor sharding rules for `glm5next` (4x), then quant work |
 
-Two of the four clear the bar on the traffic they serve. The two that do not are
-each blocked on a *specific, identified* engine defect rather than on tuning:
+**One of the four cleared the bar under measurement here** — Qwen3.8-27B, on
+replay traffic. GLM-5.3 full has a recorded 12.92 that did not reproduce (see
+above). The other two are each blocked on a *specific, identified* engine defect
+rather than on tuning:
 Flash-Next's speculation returns ~0% acceptance in all three mechanisms, and
 `glm5next` has no tensor-parallel sharding rules so it runs on one socket of four.
 
