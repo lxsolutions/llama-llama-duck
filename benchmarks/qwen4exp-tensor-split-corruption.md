@@ -194,9 +194,33 @@ benchmarks well was emitting garbage. Any fix must be validated by **exact
 output comparison against the single-node arm at `temperature=0`**, not by
 absence of a crash.
 
-Reverted; engine verified back to correct single-node output. The real fix
-assigns axes to the attention+SSM group as a unit, derived from
-`build_qwen4exp`'s dataflow.
+### What the assert actually reports
+
+Instrumenting the assert site shows it is **not** a missing tensor rule. The
+failure is in `handle_generic()` in `ggml-backend-meta.cpp`, where an operation's
+source split-states must agree:
+
+    SPLIT-MISMATCH nsrc=10 scalar_only=0 axes=[1, 10, 99, 99, 99, 99, 99, 99, 99, 99]
+
+A **ten-source** operation receiving one source split on axis 1, one **mirrored**
+(the tensor just changed), and the rest unset. `split_states_equal` rejects the
+combination and the axis resolves to `UNKNOWN`.
+
+That is the whole difficulty in one line. Mirroring any tensor in this block
+propagates a constraint into every fused operation it feeds, and satisfying that
+constraint means mirroring its co-inputs, which propagates further. Because the
+SSM path is interleaved with attention in every layer, the closure of "everything
+that must be mirrored" grows until little remains split — **at which point
+tensor parallelism buys nothing, since mirrored weights are read in full by every
+device.**
+
+So the choice is not "find the right rule". It is either design a split for this
+architecture's graph that keeps fused operations consistent, or accept that this
+block is not tensor-parallelizable in this framework and exclude the
+architecture — which is exactly the treatment `glm5next` already receives, and
+which now looks less like a gap and more like the correct answer.
+
+Reverted; engine verified back to correct single-node output.
 
 ## Recommended handling
 
