@@ -15,6 +15,16 @@ separate source line and must not be stacked on them. Verify downloads against
 [`SHA256SUMS`](SHA256SUMS), and see [`ATTRIBUTION.md`](ATTRIBUTION.md) for
 provenance.
 
+**Safety fix — apply this one.**
+[`qwen4exp-exclude-from-tensor-split.patch`](qwen4exp-exclude-from-tensor-split.patch)
+adds `LLM_ARCH_QWEN4EXP` to `llm_arch_supports_sm_tensor()`'s exclusion list.
+Without it, `--split-mode tensor` on Qwen3.8-Flash-Next produces **silently wrong
+output** — fluent nonsense, no error — while running ~45% faster than the correct
+path, so throughput tuning selects for it. With it, that configuration fails at
+load with a clear message and the single-node path is unaffected. Verified both
+ways. Evidence:
+[`benchmarks/qwen4exp-tensor-split-corruption.md`](../benchmarks/qwen4exp-tensor-split-corruption.md).
+
 **Porting the CPU-NUMA backend to a model-support branch that lacks it** —
 including how to tell "not compiled in" from "not in the tree", and the
 `--list-devices` check that misleads if you forget the environment variable —
