@@ -179,7 +179,15 @@ switch behind it. Improving it means a better attention kernel or fewer
 attention bytes — a smaller quant for those tensors specifically, which the
 Unsloth UD scheme deliberately keeps high.
 
-That is the end of the configuration search on this host.
+The two remaining unset Q8_0 flags were then tested rather than assumed:
+`GGML_CPU_Q8_0_REPACK_OUTPUT=1` together with `GGML_CPU_Q8_0_REPACK_FORCE=1`
+(which repacks every eligible Q8_0 tensor, not just attention/FFN/output)
+measured **6.267 tok/s against 6.35 baseline** — neutral to marginally negative,
+inside run-to-run spread. Production keeps them off.
+
+That is the end of the configuration search on this host: every knob identified
+across this repository has now been swept and the remaining levers all require
+new code.
 
 ## Where to look
 
