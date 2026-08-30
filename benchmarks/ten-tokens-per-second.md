@@ -38,6 +38,23 @@
 >
 > Check `top` before benchmarking. Two of this file's earlier conclusions were
 > distorted by load that `uptime` reported as a stale load average.
+>
+> **Every model re-measured quiet came out higher**, some dramatically:
+>
+> | model | contended | quiet | delta |
+> | --- | ---: | ---: | ---: |
+> | Qwen3.8-27B | 8.62 | **11.72** | +36% |
+> | GLM-5.3-Flash | 2.02 | **3.66** | **+81%** |
+> | GLM-5.3 full | 5.32 | **6.95** | +31% |
+> | Qwen3.8-Flash-Next | 6.68 | 6.69 | +0% |
+>
+> Flash-Next is the control that makes the rest credible: single-socket-bound and
+> pinned to one node, it is insulated from contention on the other three sockets
+> and did not move. The models using the whole machine moved a lot.
+>
+> **Host quiet was worth more than every configuration knob in this file
+> combined.** Benchmarking a shared box without checking it first produces
+> numbers that are simply wrong, in the pessimistic direction, by up to 81%.
 
 Target: **>10 decode tok/s** on four models, one host — 4 x Xeon Gold 6242,
 64 physical cores, 755 GiB DDR4-2400 across 24 populated channels, 4 NUMA nodes,
@@ -57,8 +74,8 @@ Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second
 | --- | --- | ---: | ---: | ---: | ---: |
 | Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **6.68** (4-device path VOID) | 80.3 |
 | Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **11.72** (quiet host, 6 reps, all >10) | 22.5 |
-| GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **5.32** prose / **6.25** replay | **10.6** |
-| GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (**9.8 on its one socket**) |
+| GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **6.95** (quiet host) | **10.6** |
+| GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **3.66** (quiet host) | 39.3 (**9.8 on its one socket**) |
 
 **Qwen3.8-27B reliably exceeds 10 tok/s** on a quiet host — 11.72 mean, every
 repetition above 10, output verified. The other three do not. Qwen3.8-27B exceeded it on

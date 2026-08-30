@@ -339,8 +339,8 @@ tokens/second at `temperature=0`:
 | --- | ---: | ---: | --- |
 | Qwen3.8-Flash-Next (176.9B MoE, Q2_K_XL) | 6.68 | **6.68** | no change — the faster 4-device path **silently corrupts output** |
 | Qwen3.8-27B (dense) | 6.12 | **11.72** (all 6 reps >10) | Q8_K_XL -> Q4_0; MTP depth 2; measured on a QUIET host |
-| GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **5.32** prose / **6.25** replay | removed a composite `--spec-type` that failed every request |
-| GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **2.02** | blocked: no tensor-parallel for `glm5next` |
+| GLM-5.3 full (Q4_K_XL, ~467 GB) | **0** | **6.95** | removed a composite `--spec-type` that failed every request |
+| GLM-5.3-Flash (IQ2_XXS, ~102 GB) | — | **3.66** | blocked: no tensor-parallel for `glm5next` |
 
 Chasing a **10 tok/s** bar across all four produced two results that matter more
 than any tok/s figure.
