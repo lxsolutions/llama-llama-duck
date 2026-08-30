@@ -17,7 +17,27 @@
 > [`qwen4exp-tensor-split-corruption.md`](qwen4exp-tensor-split-corruption.md).
 >
 > Qwen3.8-27B (`qwen35`) and GLM-5.3 full (`glm-dsa`) were re-verified on their
-> tensor-split configurations and are **correct**. Their numbers stand.
+> tensor-split configurations and are **correct**.
+>
+> ## SECOND CORRECTION: Qwen3.8-27B does clear 10 tok/s
+>
+> The 8.62 figure recorded for Qwen3.8-27B was measured on a **contended host**
+> (background containers, a concurrent download). Re-measured on a quiet box, six
+> repetitions across three workloads:
+>
+> | workload | tok/s |
+> | --- | ---: |
+> | prose | 10.427 / 10.363 |
+> | code | 11.455 / 11.340 |
+> | recall | 13.243 / 13.476 |
+> | **mean** | **11.717** |
+>
+> **Every repetition is above 10**, and output was verified correct at that exact
+> configuration (391 / Canberra / valid syllogism). Context size barely matters
+> (9.86 at 4096 vs 9.71 at 8192 in an earlier pass); host quiet does, by ~36%.
+>
+> Check `top` before benchmarking. Two of this file's earlier conclusions were
+> distorted by load that `uptime` reported as a stale load average.
 
 Target: **>10 decode tok/s** on four models, one host — 4 x Xeon Gold 6242,
 64 physical cores, 755 GiB DDR4-2400 across 24 populated channels, 4 NUMA nodes,
@@ -36,11 +56,12 @@ Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second
 | model | quant | active GB/tok | start | best (verified) | raw ceiling @360 GB/s |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **6.68** (4-device path VOID) | 80.3 |
-| Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **8.62** prose / ~10.9 replay | 22.5 |
+| Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **11.72** (quiet host, 6 reps, all >10) | 22.5 |
 | GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **5.32** prose / **6.25** replay | **10.6** |
 | GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (**9.8 on its one socket**) |
 
-**No model reliably exceeds 10 tok/s on novel prose.** Qwen3.8-27B exceeded it on
+**Qwen3.8-27B reliably exceeds 10 tok/s** on a quiet host — 11.72 mean, every
+repetition above 10, output verified. The other three do not. Qwen3.8-27B exceeded it on
 replay traffic (10.90 mean) but with a 6.6–17.1 spread across repetitions, so
 that is a workload-and-luck result rather than a dependable rate. Every figure
 above is the mean of at least six repetitions except where noted.
