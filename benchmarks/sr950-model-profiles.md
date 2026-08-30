@@ -25,6 +25,14 @@ per socket with polling at 50.
 | Agentic replay, second pass | 12.546 | 92.35% |
 | Agentic replay, combined | **12.920** | 93.07% |
 
+> **Not reproduced (2026-08-29).** A later re-measurement of the restored
+> service, same `n_max=18 / p_min=0.75` profile, reached only **6.25 tok/s** on a
+> ~500-token file-reproduce replay, at 72.8–77.5% acceptance. Acceptance and
+> draft length were healthy, so the mechanism works; the suites differ and
+> warm-up matters a great deal. Do not quote 12.92 as this host's replay
+> throughput without re-deriving it from a published prompt set. See
+> [`ten-tokens-per-second.md`](ten-tokens-per-second.md).
+
 All six agentic correctness gates passed. The general server profile reserves a
 maximum speculative depth of 32 but defaults each request to depth 2 and
 `p_min=0`. The agentic result used a request-scoped override of depth 18 and

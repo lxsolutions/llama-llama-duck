@@ -1,40 +1,50 @@
 # What it takes to reach 10 tok/s on a 4-socket CPU
 
 Target: **>10 decode tok/s** on four models, one host — 4 x Xeon Gold 6242,
-64 physical cores, 755 GiB DDR4-2933, 4 NUMA nodes, no accelerator. Measured
-bandwidth ceiling: **365 GB/s** NUMA-local, 138.9 GB/s interleaved.
+64 physical cores, 755 GiB DDR4-2400 across 24 populated channels, 4 NUMA nodes,
+no accelerator. Theoretical peak 460.8 GB/s; **measured achievable 360 GB/s**
+NUMA-local, 138.9 GB/s interleaved.
 
 This file records how close each model got, and — more usefully — the arithmetic
 that says which of them *can* get there and what would have to change.
 
 ## Where the four models landed
 
-Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second`:
+Decode tok/s, quiet host, `temperature=0`, server-reported `predicted_per_second`.
+"Active GB/tok" is the corrected figure — routed experts scaled by
+`n_used / n_expert`, gathered embeddings excluded (see the correction below):
 
-| model | quant | bytes/token | start | best | ceiling at 365 GB/s |
+| model | quant | active GB/tok | start | best | raw ceiling @360 GB/s |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Qwen3.8-27B | Q4_0, 16.1 GB | ~16 GB | 6.12 | **8.33** | 22.8 |
-| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB | ~14 GB | 6.68 | **8.98** | ~26 |
-| GLM-5.3 full | Q4_K_XL, 467 GB | ~36 GB | 0 (broken) | **5.32** general / **6.25** replay | **10.1** |
-| GLM-5.3-Flash | IQ2_XXS, 102 GB | ~14 GB | — | **2.02** | ~26 (locked) |
+| Qwen3.8-27B | Q4_0, 16.1 GB file | ~16 | 6.12 | **8.33** prose / **10.90** replay | 22.5 |
+| Qwen3.8-Flash-Next | Q2_K_XL, 78.8 GB file | **4.48** | 6.68 | **9.21** | 80.3 |
+| GLM-5.3 full | Q4_K_XL, 467 GB file | **33.97** | 0 (broken) | **5.32** prose / **6.25** replay | **10.6** |
+| GLM-5.3-Flash | IQ2_XXS, 102 GB file | **9.16** | — | **2.02** | 39.3 (locked to 1 socket) |
 
 ## The arithmetic nobody can argue with
 
 Decode at batch 1 is bandwidth-bound: `tok/s = bandwidth / bytes-per-token`. So
 the target sets a hard requirement before any tuning:
 
-| model | GB/s needed for 10 tok/s | as % of 365 GB/s |
-| --- | ---: | ---: |
-| Qwen3.8-Flash-Next | 140 | 38% |
-| Qwen3.8-27B | 160 | 44% |
-| GLM-5.3-Flash | 140 | 38% (but see below) |
-| **GLM-5.3 full** | **360** | **99%** |
+Using **corrected active bytes/token** (see the correction section below — an
+earlier revision of this table used file bytes and was badly wrong for MoE):
 
-**GLM-5.3 full cannot reach 10 tok/s non-speculatively at Q4_K_XL.** Not with
-better kernels, not with better placement — 10 tok/s needs 99% of a bandwidth
-figure that a *pure streaming benchmark* only just achieves. Any claim of >10
-tok/s on this model is either speculative decoding, a smaller quant, or a
-measurement error.
+| model | active GB/tok | GB/s for 10 tok/s | GB/s for 13 tok/s | as % of 360 |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen3.8-Flash-Next | 4.48 | 45 | 58 | **16%** |
+| GLM-5.3-Flash | 9.16 | 92 | 119 | 33% |
+| Qwen3.8-27B | ~16 | 160 | 208 | 58% |
+| **GLM-5.3 full** | **33.97** | **340** | **442** | **123%** |
+
+**GLM-5.3 full cannot reach 10 tok/s non-speculatively at Q4_K_XL, and cannot
+reach 13 at all.** 13 tok/s would need 442 GB/s against a measured 360 GB/s
+ceiling — more bandwidth than the machine has, before any inefficiency. Not a
+kernel problem, not a placement problem: arithmetic. The routes past it are
+speculative decoding, a smaller quant (measured worse — see the quant curve), or
+a different model.
+
+The other three have plenty of bandwidth headroom and are limited by something
+else entirely.
 
 Speculation is the only legitimate way past that wall, since K accepted tokens
 are emitted per single target forward pass. It does help — 5.32 -> 6.25 moving
@@ -44,26 +54,72 @@ that figure did not reproduce — see below.)
 
 **State the workload with the number, or the number means nothing.**
 
-## Measured extraction efficiency, and the gap that is actually available
+## The hardware really does deliver — measure it before blaming it
 
-| model | tok/s | achieved GB/s | % of 365 |
-| --- | ---: | ---: | ---: |
-| Qwen3.8-27B Q4_0, raw | 7.42 | 119 | 33% |
-| Qwen3.8-Flash-Next, raw | 8.98 | ~126 | 35% |
-| GLM-5.3 full, raw | 3.78 | 136 | 37% |
+Host DIMM configuration read from SMBIOS: **24 DIMMs at 2400 MT/s**, i.e. all 24
+channels populated (6 per socket). Theoretical peak is
+`24 x 2400 x 8 = 460.8 GB/s`.
 
-All three land near **one third** of streaming bandwidth. That consistency,
-across three models, two engines, and three quants, says the limit is structural
-to the decode path rather than specific to any model.
+Measured with `tools/membw.c`, four sockets concurrently, NUMA-local:
 
-For reference, this repository's isolated kernel benchmark measured repacked
-Q4_0 at 43.1 GB/s against 95.3 GB/s available on one socket — **45%**. So the
-kernels alone reach 45% and whole-model decode reaches 33%; the missing ~12
-points are the rest of the graph (attention, norms, KV, collective).
+| threads/socket | per-socket GB/s | aggregate |
+| ---: | --- | ---: |
+| 16 | 94.8 / 90.1 / 90.8 / 84.1 | **359.8 GB/s** |
+| 24 | 93.3 / 88.3 / 88.3 / 89.3 | 359.2 GB/s |
+| 32 | 95.4 / 90.5 / 81.0 / 83.4 | 350.3 GB/s |
 
-Closing 33% -> 45% would put Qwen3.8-27B at 10.2 tok/s raw and Flash-Next near
-12. **That is where the remaining headroom is, and it is kernel and graph work,
-not configuration.** Every configuration knob below was swept and is exhausted.
+**360 GB/s achievable, 78% of theoretical peak** — a normal DDR4 STREAM result,
+and flat in thread count above 16. Use 360, not 460.8, as the ceiling.
+
+## Extraction efficiency — and a correction that changes the conclusion
+
+An earlier revision of this file reported that all models land near "one third"
+of bandwidth, and inferred one shared structural limit. **That was wrong**, and
+wrong in a way worth documenting: it divided by *file* bytes, which is only
+valid for a dense model. For MoE, the weights read per token are the routed
+experts actually selected, plus the dense parts — a small fraction of the file.
+
+There is a second trap on top of that. Computing active bytes by classifying
+tensor names put **28.80 GB** of Qwen3.8-Flash-Next into "global" — because
+`per_layer_token_embd.weight` is a 28.8 GB *embedding table*. Embeddings are
+**gathered**, not streamed: a token reads one row, a few hundred bytes. Counting
+that table as active bytes inflated the figure more than sevenfold.
+
+Corrected, using per-tensor classification with experts scaled by
+`n_expert_used / n_expert` and embeddings excluded:
+
+| model | active GB/token | tok/s | achieved GB/s | **% of 360** | raw ceiling |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GLM-5.3 full (8/256 experts) | 33.97 | 5.32 | 181 | **50%** | 10.6 |
+| Qwen3.8-27B (dense) | ~16 | 7.42 | 119 | **33%** | 22.5 |
+| Qwen3.8-Flash-Next (10/512) | **4.48** | 9.21 | 41 | **11%** | 80.3 |
+| GLM-5.3-Flash (8/288) | **9.16** | 2.02 | 18.5 | **5%** | 39.3 |
+
+The models are not all alike, and the spread is 10x:
+
+- **GLM-5.3 full is nearly bandwidth-bound** at 50% of achievable. Its 10.6 tok/s
+  ceiling is real, and no kernel work gets it to 13 — that needs 442 GB/s, which
+  is 123% of what the hardware does. Speculation is the only route.
+- **The MoE models are nowhere near bandwidth-bound.** Flash-Next uses 11% of
+  available bandwidth and GLM-5.3-Flash 5%. They are not short of memory
+  throughput; they are spending their time somewhere else.
+
+For Flash-Next the arithmetic is now encouraging rather than damning:
+**13 tok/s needs only 58 GB/s, 16% of the machine**, against 11% today — a 1.45x
+kernel improvement, not a hardware limit.
+
+### Where MoE decode actually goes
+
+Flash-Next runs **512 experts, 10 used, 48 layers**. Each routed expert matmul is
+`[2560 x 640]`, and there are `10 x 48 = 480` of them per token, then sharded
+four ways so each device handles roughly `[640 x 640]`. That is hundreds of tiny
+matmuls per token, each with dispatch and collective overhead, through
+`MUL_MAT_ID`'s single-row `gemv` path.
+
+This is consistent with this repository's earlier MoE kernel measurements (repack
+buys MoE ~1.0–1.26x against dense's 2.5–6.7x) and with its observation that MoE
+`gemv` only becomes `gemm` above three rows. **The MoE expert-gather path, not
+memory bandwidth, is the binding constraint on three of these four models.**
 
 ## Knobs that are exhausted (swept, no further gain)
 
@@ -231,20 +287,46 @@ no route past its bandwidth ceiling.
 | --- | --- | --- |
 | **Qwen3.8-27B** | **met on replay** (10.90 mean / 17.13 warm); 1.20x short on novel prose | efficiency 33% -> 40%, or a draft pass that runs at bandwidth |
 | GLM-5.3 full | 1.6x short on replay (6.25), 1.9x on novel prose | impossible raw at Q4 (needs 99% of peak) — speculation only, and its measured multiplier is 1.18x not the 2.4x once recorded |
-| Qwen3.8-Flash-Next | 1.11x short, all workloads | fix the engine's speculative path for this arch; or efficiency 35% -> 39% |
-| GLM-5.3-Flash | 5.0x short | per-tensor sharding rules for `glm5next` (4x), then quant work |
+| Qwen3.8-Flash-Next | 1.09x short of 10, 1.41x of 13 | at 11% of bandwidth — MoE gather path, or fix the engine's speculative path for this arch. Not bandwidth. |
+| GLM-5.3-Flash | 5.0x short | per-tensor sharding rules for `glm5next` (4x), then the same MoE gather work |
 
 **One of the four cleared the bar under measurement here** — Qwen3.8-27B, on
 replay traffic. GLM-5.3 full has a recorded 12.92 that did not reproduce (see
 above). The other two are each blocked on a *specific, identified* engine defect
-rather than on tuning:
+rather than on tuning.
+
+### Attempted: porting the GLM engine's IQ repack kernels (failed)
+
+The GLM integration patch adds ~4,800 lines of x86 kernel work the Qwen engine
+lacks, including **IQ2_XS and IQ3_XXS repack paths** — directly relevant, since
+Qwen3.8-Flash-Next is 22.8 GB of IQ2_XS, a format with no repack in stock
+llama.cpp and a measured 7.2 GB/s.
+
+Extracting the five kernel files (`repack.cpp`, `repack.h`,
+`arch/x86/repack.cpp`, `traits.*`) as a patch did not apply — the two trees have
+different bases and the files have diverged by ~1,700 lines. Copying them
+wholesale from the GLM tree **compiled cleanly**, which is misleading, and then
+aborted at model load:
+
+    repack.cpp:6515: GGML_ASSERT(size == ggml_nbytes(tensor)) failed
+
+and it aborted with the IQ flags *off* as well, i.e. the copy broke the working
+baseline rather than only the new path. The repacked-buffer size calculation
+depends on surrounding definitions that also differ between the trees. Reverted;
+the engine is back to 9.21 tok/s.
+
+**A clean compile is not evidence of a successful kernel port.** Doing this
+properly means porting the size/traits plumbing together with the kernels, or
+rebasing the GLM work onto the Qwen engine's base commit — not copying files.
 Flash-Next's speculation returns ~0% acceptance in all three mechanisms, and
 `glm5next` has no tensor-parallel sharding rules so it runs on one socket of four.
 
-Underneath all of it sits one shared limit: **whole-model decode extracts ~33% of
-streaming bandwidth where the kernels alone reach 45%.** Closing that gap would
-put Qwen3.8-27B over 10 on novel prose too, and it is one problem rather than
-four — the highest-value target on this class of machine.
+There is no single shared limit — that earlier claim was an artifact of dividing
+by file bytes. Corrected, the four models sit at **50% / 33% / 11% / 5%** of
+achievable bandwidth, and only GLM-5.3 full is anywhere near memory-bound. The
+highest-value target on this class of machine is the **MoE expert-gather path**:
+Flash-Next and GLM-5.3-Flash are spending 89% and 95% of their time somewhere
+other than reading weights.
 
 ### If you take one thing from this file
 

@@ -451,6 +451,7 @@ before applying or rebasing them.
 | `tools/prefetch-model.sh` | warm page cache before mmap load |
 | `tools/decode_bench.py` | decode tok/s from the server's own timings, plus draft acceptance |
 | `tools/sweep_config.sh` | one arm = one fresh server; prints NUMA placement and RssAnon/RssFile |
+| `tools/active_bytes.py` | active bytes/token from the GGUF tensor table — scales experts by n_used/n_expert and excludes gathered embeddings |
 
 `decode_bench.py` reads `predicted_per_second` out of the server's `timings`
 block rather than timing the HTTP round trip, so client latency and prompt
